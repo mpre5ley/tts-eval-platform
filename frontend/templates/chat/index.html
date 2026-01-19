@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TTS Evaluation Platform</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">TTS Evaluation Platform</div>
+        <div class="nav-links">
+            <a href="{% url 'index' %}" class="active">Evaluate</a>
+            <a href="{% url 'sessions' %}">Sessions</a>
+            <a href="{% url 'metrics' %}">Metrics</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <header class="page-header">
+            <h1>Speech Synthesis Evaluation</h1>
+            <p class="subtitle">Compare TTS providers: Latency, Time-to-First-Audio, Synthesis Duration, and Playback Jitter</p>
+        </header>
+        
+        <form id="synthesis-form">
+            <!-- Text Input -->
+            <div class="form-section">
+                <label for="text-input">Text to Synthesize:</label>
+                <textarea id="text-input" name="text" rows="4" 
+                    placeholder="Enter the text you want to convert to speech..."></textarea>
+                <div class="char-count">
+                    <span id="char-count">0</span> characters | <span id="word-count">0</span> words
+                </div>
+            </div>
+
+            <!-- Provider Selection -->
+            <div class="form-section">
+                <label>Select TTS Providers (up to 5):</label>
+                <div class="providers-container">
+                    {% for provider in providers %}
+                    <div class="provider-card" data-provider-id="{{ provider.provider_id }}">
+                        <div class="provider-header">
+                            <label class="provider-checkbox">
+                                <input type="checkbox" name="provider" 
+                                       value="{{ provider.provider_id }}"
+                                       data-name="{{ provider.name }}">
+                                <span class="checkmark"></span>
+                                <span class="provider-name">{{ provider.name }}</span>
+                                {% if provider.demo_mode %}
+                                <span class="demo-badge">Demo</span>
+                                {% endif %}
+                            </label>
+                        </div>
+                        <p class="provider-description">{{ provider.description }}</p>
+                        
+                        <div class="voice-selection">
+                            <label>Voice:</label>
+                            <select class="voice-select" data-provider="{{ provider.provider_id }}">
+                                {% for voice in provider.voices %}
+                                <option value="{{ voice.voice_id }}" 
+                                        data-language="{{ voice.language }}"
+                                        data-gender="{{ voice.gender }}">
+                                    {{ voice.name }} ({{ voice.language }}, {{ voice.gender }})
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    {% empty %}
+                    <div class="error-message">
+                        <p>No TTS providers available. Is the backend running?</p>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Options -->
+            <div class="form-section options-section">
+                <div class="option-group">
+                    <label class="option-checkbox">
+                        <input type="checkbox" id="streaming-mode" name="streaming">
+                        <span class="checkmark"></span>
+                        Enable Streaming Mode
+                    </label>
+                    <span class="option-hint">Measure chunk-by-chunk delivery for jitter analysis</span>
+                </div>
+                
+                <div class="option-group">
+                    <label for="session-name">Session Name (optional):</label>
+                    <input type="text" id="session-name" name="session_name" 
+                           placeholder="e.g., 'Short sentences test'">
+                </div>
+            </div>
+
+            <button type="submit" id="submit-btn" class="primary-btn">
+                <span class="btn-text">Run Evaluation</span>
+                <span class="btn-loading hidden">
+                    <span class="spinner-small"></span>
+                    Synthesizing...
+                </span>
+            </button>
+        </form>
+
+        <!-- Loading State -->
+        <div id="loading" class="hidden">
+            <div class="loading-card">
+                <div class="spinner"></div>
+                <p>Synthesizing speech with selected providers...</p>
+                <p class="loading-hint">This may take a few seconds per provider</p>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="results" class="hidden">
+            <div class="results-header">
+                <h2>Evaluation Results</h2>
+                <div class="session-info">
+                    <span>Session ID: <code id="session-id"></code></span>
+                </div>
+            </div>
+
+            <!-- Metrics Summary -->
+            <div id="metrics-summary" class="metrics-summary-grid">
+                <!-- Dynamically populated -->
+            </div>
+
+            <!-- Comparison Chart -->
+            <div class="chart-section">
+                <h3>Latency Comparison</h3>
+                <div id="comparison-chart" class="comparison-chart">
+                    <!-- Dynamically populated bar chart -->
+                </div>
+            </div>
+
+            <!-- Individual Results -->
+            <div id="results-cards" class="results-grid">
+                <!-- Dynamically populated -->
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <p>TTS Evaluation Platform - Measuring speech synthesis performance</p>
+    </footer>
+
+    <script src="{% static 'js/main.js' %}"></script>
+</body>
+</html>

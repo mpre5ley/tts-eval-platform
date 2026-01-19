@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evaluation Sessions - TTS Evaluation Platform</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">TTS Evaluation Platform</div>
+        <div class="nav-links">
+            <a href="{% url 'index' %}">Evaluate</a>
+            <a href="{% url 'sessions' %}" class="active">Sessions</a>
+            <a href="{% url 'metrics' %}">Metrics</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <header class="page-header">
+            <h1>Evaluation Sessions</h1>
+            <p class="subtitle">Review past TTS evaluation results and metrics</p>
+        </header>
+
+        <div class="sessions-list">
+            {% for session in sessions %}
+            <div class="session-card" data-session-id="{{ session.session_id }}">
+                <div class="session-header">
+                    <h3>{{ session.name|default:"Unnamed Session" }}</h3>
+                    <span class="session-status status-{{ session.status }}">{{ session.status }}</span>
+                </div>
+                
+                <div class="session-text">
+                    <strong>Text:</strong>
+                    <p>"{{ session.text|truncatewords:30 }}"</p>
+                </div>
+                
+                <div class="session-meta">
+                    <span class="meta-item">
+                        <span class="meta-label">Evaluations:</span>
+                        <span class="meta-value">{{ session.evaluation_count }}</span>
+                    </span>
+                    <span class="meta-item">
+                        <span class="meta-label">Successful:</span>
+                        <span class="meta-value">{{ session.successful_evaluations }}</span>
+                    </span>
+                    <span class="meta-item">
+                        <span class="meta-label">Created:</span>
+                        <span class="meta-value">{{ session.created_at|date:"Y-m-d H:i" }}</span>
+                    </span>
+                </div>
+                
+                <button class="view-session-btn" onclick="viewSession('{{ session.session_id }}')">
+                    View Details
+                </button>
+            </div>
+            {% empty %}
+            <div class="empty-state">
+                <h3>No evaluation sessions yet</h3>
+                <p>Run your first TTS evaluation to see results here.</p>
+                <a href="{% url 'index' %}" class="primary-btn">Start Evaluation</a>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Session Detail Modal -->
+        <div id="session-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Session Details</h2>
+                    <button class="close-btn" onclick="closeModal()">&times;</button>
+                </div>
+                <div id="session-detail-content">
+                    <!-- Dynamically populated -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <p>TTS Evaluation Platform - Measuring speech synthesis performance</p>
+    </footer>
+
+    <script>
+        async function viewSession(sessionId) {
+            try {
+                const response = await fetch(`/api/sessions/${sessionId}/`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert('Error loading session: ' + data.error);
+                    return;
+                }
+                
+                const content = document.getElementById('session-detail-content');
+                content.innerHTML = `
+                    <div class="session-detail">
+                        <div class="detail-section">
+                            <h4>Session Information</h4>
+                            <p><strong>ID:</strong> <code>${data.session_id}</code></p>
+                            <p><strong>Name:</strong> ${data.name || 'Unnamed'}</p>
+                            <p><strong>Status:</strong> <span class="status-${data.status}">${data.status}</span></p>
+                            <p><strong>Created:</strong> ${new Date(data.created_at).toLocaleString()}</p>
+                        </div>
+                        
+                        <div class="detail-section">
+                            <h4>Text</h4>
+                            <p class="text-content">"${data.text}"</p>
+                        </div>
+                        
+                        <div class="detail-section">
+                            <h4>Evaluations (${data.evaluations?.length || 0})</h4>
+                            <div class="evaluations-table">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Provider</th>
+                                            <th>Voice</th>
+                                            <th>TTFA (ms)</th>
+                                            <th>Total (ms)</th>
+                                            <th>Jitter (ms)</th>
+                                            <th>RTF</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${(data.evaluations || []).map(eval => `
+                                            <tr class="${eval.success ? '' : 'error-row'}">
+                                                <td>${eval.provider_name}</td>
+                                                <td>${eval.voice_id}</td>
+                                                <td>${eval.time_to_first_audio?.toFixed(1) || '-'}</td>
+                                                <td>${eval.total_synthesis_time?.toFixed(1) || '-'}</td>
+                                                <td>${eval.playback_jitter?.toFixed(2) || '-'}</td>
+                                                <td>${eval.realtime_factor?.toFixed(2) || '-'}</td>
+                                                <td>${eval.success ? '✓' : '✗'}</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                document.getElementById('session-modal').classList.remove('hidden');
+            } catch (error) {
+                alert('Error loading session: ' + error.message);
+            }
+        }
+        
+        function closeModal() {
+            document.getElementById('session-modal').classList.add('hidden');
+        }
+        
+        // Close modal on outside click
+        document.getElementById('session-modal').addEventListener('click', function(e) {
+            if (e.target === this) closeModal();
+        });
+        
+        // Close modal on escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeModal();
+        });
+    </script>
+</body>
+</html>

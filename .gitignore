@@ -1,0 +1,21 @@
+# Environment Variables
+*.env
+./backend/.env
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+
+# db artifacts
+*.sqlite3
+*.db
+
+# Keys
+*.pem

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Provider Metrics - TTS Evaluation Platform</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">TTS Evaluation Platform</div>
+        <div class="nav-links">
+            <a href="{% url 'index' %}">Evaluate</a>
+            <a href="{% url 'sessions' %}">Sessions</a>
+            <a href="{% url 'metrics' %}" class="active">Metrics</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <header class="page-header">
+            <h1>Provider Comparison Metrics</h1>
+            <p class="subtitle">Aggregated performance data across all TTS providers</p>
+        </header>
+
+        <!-- Metrics Legend -->
+        <div class="metrics-legend">
+            <div class="legend-item">
+                <span class="legend-color ttfb"></span>
+                <span>TTFB: Time to First Byte</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color ttfa"></span>
+                <span>TTFA: Time to First Audio</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color total"></span>
+                <span>Total: Complete Synthesis Time</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color jitter"></span>
+                <span>Jitter: Playback Variation</span>
+            </div>
+        </div>
+
+        <!-- Comparison Table -->
+        <div class="metrics-table-container">
+            <table class="metrics-table">
+                <thead>
+                    <tr>
+                        <th>Provider</th>
+                        <th>Evaluations</th>
+                        <th>Success Rate</th>
+                        <th>Avg TTFB (ms)</th>
+                        <th>Avg TTFA (ms)</th>
+                        <th>Avg Total (ms)</th>
+                        <th>Avg Jitter (ms)</th>
+                        <th>P50 (ms)</th>
+                        <th>P95 (ms)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for metric in metrics %}
+                    <tr>
+                        <td class="provider-cell">
+                            <strong>{{ metric.provider_name }}</strong>
+                        </td>
+                        <td>{{ metric.total_evaluations }}</td>
+                        <td>
+                            <span class="success-rate {% if metric.success_rate >= 95 %}good{% elif metric.success_rate >= 80 %}warning{% else %}bad{% endif %}">
+                                {{ metric.success_rate }}%
+                            </span>
+                        </td>
+                        <td>{{ metric.avg_ttfb|floatformat:1|default:"-" }}</td>
+                        <td>{{ metric.avg_ttfa|floatformat:1|default:"-" }}</td>
+                        <td>{{ metric.avg_total_time|floatformat:1|default:"-" }}</td>
+                        <td>{{ metric.avg_jitter|floatformat:2|default:"-" }}</td>
+                        <td>{{ metric.p50_time|floatformat:1|default:"-" }}</td>
+                        <td>{{ metric.p95_time|floatformat:1|default:"-" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="9" class="empty-cell">
+                            No metrics data available yet. Run some evaluations first.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Visual Comparison Charts -->
+        {% if metrics %}
+        <div class="charts-section">
+            <h2>Visual Comparison</h2>
+            
+            <!-- Latency Chart -->
+            <div class="chart-container">
+                <h3>Average Latency Comparison</h3>
+                <div class="bar-chart" id="latency-chart">
+                    {% for metric in metrics %}
+                    <div class="chart-row">
+                        <span class="chart-label">{{ metric.provider_name }}</span>
+                        <div class="chart-bars">
+                            <div class="bar ttfb" 
+                                 style="width: {% widthratio metric.avg_ttfb|default:0 500 100 %}%"
+                                 title="TTFB: {{ metric.avg_ttfb|floatformat:1|default:'-' }}ms">
+                            </div>
+                            <div class="bar ttfa" 
+                                 style="width: {% widthratio metric.avg_ttfa|default:0 500 100 %}%"
+                                 title="TTFA: {{ metric.avg_ttfa|floatformat:1|default:'-' }}ms">
+                            </div>
+                            <div class="bar total" 
+                                 style="width: {% widthratio metric.avg_total_time|default:0 2000 100 %}%"
+                                 title="Total: {{ metric.avg_total_time|floatformat:1|default:'-' }}ms">
+                            </div>
+                        </div>
+                        <span class="chart-value">{{ metric.avg_total_time|floatformat:0|default:"-" }}ms</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Success Rate Chart -->
+            <div class="chart-container">
+                <h3>Success Rates</h3>
+                <div class="success-chart" id="success-chart">
+                    {% for metric in metrics %}
+                    <div class="success-row">
+                        <span class="chart-label">{{ metric.provider_name }}</span>
+                        <div class="success-bar-container">
+                            <div class="success-bar" 
+                                 style="width: {{ metric.success_rate }}%"
+                                 data-rate="{{ metric.success_rate }}">
+                            </div>
+                        </div>
+                        <span class="chart-value">{{ metric.success_rate }}%</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Refresh Button -->
+        <div class="actions-bar">
+            <button onclick="location.reload()" class="secondary-btn">
+                Refresh Metrics
+            </button>
+            <a href="{% url 'index' %}" class="primary-btn">
+                Run New Evaluation
+            </a>
+        </div>
+
+        <!-- Metrics Explanation -->
+        <div class="info-section">
+            <h3>Understanding the Metrics</h3>
+            <div class="info-grid">
+                <div class="info-card">
+                    <h4>Time to First Byte (TTFB)</h4>
+                    <p>The time from sending the synthesis request to receiving the first byte of the response. Lower is better.</p>
+                </div>
+                <div class="info-card">
+                    <h4>Time to First Audio (TTFA)</h4>
+                    <p>The time until the first playable audio chunk is available. Critical for real-time applications.</p>
+                </div>
+                <div class="info-card">
+                    <h4>Total Synthesis Time</h4>
+                    <p>The complete duration from request to fully received audio. Includes all processing and transfer time.</p>
+                </div>
+                <div class="info-card">
+                    <h4>Playback Jitter</h4>
+                    <p>The variation in timing between audio chunks during streaming. Lower jitter means smoother playback.</p>
+                </div>
+                <div class="info-card">
+                    <h4>Real-time Factor (RTF)</h4>
+                    <p>Audio duration / synthesis time. Values > 1 mean faster than real-time synthesis.</p>
+                </div>
+                <div class="info-card">
+                    <h4>Percentiles (P50, P95, P99)</h4>
+                    <p>Statistical distribution of synthesis times. P95 means 95% of requests are faster than this value.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <p>TTS Evaluation Platform - Measuring speech synthesis performance</p>
+    </footer>
+
+    <script>
+        // Add interactivity for bar tooltips
+        document.querySelectorAll('.bar').forEach(bar => {
+            bar.addEventListener('mouseenter', function() {
+                this.style.opacity = '1';
+            });
+            bar.addEventListener('mouseleave', function() {
+                this.style.opacity = '0.8';
+            });
+        });
+        
+        // Color success bars based on rate
+        document.querySelectorAll('.success-bar').forEach(bar => {
+            const rate = parseFloat(bar.dataset.rate);
+            if (rate >= 95) {
+                bar.style.background = 'linear-gradient(90deg, #10b981, #059669)';
+            } else if (rate >= 80) {
+                bar.style.background = 'linear-gradient(90deg, #f59e0b, #d97706)';
+            } else {
+                bar.style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
+            }
+        });
+    </script>
+</body>
+</html>

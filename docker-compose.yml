@@ -1,0 +1,41 @@
+# Docker Compose for TTS Evaluation Platform
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=True
+      - SECRET_KEY=backend-docker-secret-key
+      - ALLOWED_HOSTS=localhost,127.0.0.1,backend
+      - DOCKER_ENV=true
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend:/app
+      - backend-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - DEBUG=True
+      - SECRET_KEY=frontend-docker-secret-key
+      - ALLOWED_HOSTS=localhost,127.0.0.1,frontend
+      - BACKEND_API_URL=http://backend:8000/api
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+    restart: unless-stopped
+
+volumes:
+  backend-data:
