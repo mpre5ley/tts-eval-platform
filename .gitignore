@@ -14,6 +14,7 @@ __pycache__/
 *.pyo
 
 # db artifacts
+./backend/*.sqlite3
 *.sqlite3
 *.db
 
