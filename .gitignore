@@ -1,6 +1,5 @@
 # Environment Variables
-*.env
-./backend/.env
+**.env
 
 # Logs
 *.log
@@ -9,13 +8,13 @@
 .DS_Store
 
 # Python artifacts
-__pycache__/
 *.pyc
 *.pyo
+**/__pycache__/
+__pycache__/
 
 # db artifacts
-./backend/*.sqlite3
-*.sqlite3
+**.sqlite3
 *.db
 
 # Keys

@@ -751,6 +751,7 @@ class AmazonPollyProvider(BaseTTSProvider):
                     'language': v['LanguageCode'],
                     'gender': v.get('Gender', 'Neutral').lower(),
                     'description': f"{v['Name']} - {v['LanguageName']}",
+                    'supported_engines': v.get('SupportedEngines', ['standard']),
                 }
                 for v in response.get('Voices', [])
             ]
@@ -759,6 +760,27 @@ class AmazonPollyProvider(BaseTTSProvider):
         
         return []
     
+    def _get_best_engine(self, voice_id: str) -> str:
+        """Get the best available engine for a voice"""
+        try:
+            # Get voice info to check supported engines
+            response = self.client.describe_voices()
+            for voice in response.get('Voices', []):
+                if voice['Id'] == voice_id:
+                    engines = voice.get('SupportedEngines', ['standard'])
+                    # Prefer neural > generative > long-form > standard
+                    if 'neural' in engines:
+                        return 'neural'
+                    elif 'generative' in engines:
+                        return 'generative'
+                    elif 'long-form' in engines:
+                        return 'long-form'
+                    else:
+                        return 'standard'
+        except Exception:
+            pass
+        return 'standard'  # Fallback to standard which all voices support
+    
     def synthesize(self, text: str, voice_id: str, **kwargs) -> TTSResult:
         """Synthesize text using Amazon Polly"""
         metrics = TTSMetrics()
@@ -766,7 +788,12 @@ class AmazonPollyProvider(BaseTTSProvider):
         metrics.character_count = char_count
         metrics.word_count = word_count
         
-        engine = kwargs.get('engine', 'neural')
+        # Auto-detect best engine if not specified
+        engine = kwargs.get('engine')
+        if not engine and not self.demo_mode:
+            engine = self._get_best_engine(voice_id)
+        elif not engine:
+            engine = 'neural'
         
         if self.demo_mode:
             return self._demo_synthesis(text, voice_id, metrics)

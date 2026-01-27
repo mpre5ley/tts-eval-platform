@@ -428,12 +428,11 @@ def get_comparison_metrics(request):
     provider_ids = request.query_params.getlist('provider_ids')
     
     if not provider_ids:
-        # Get all providers with evaluations
-        provider_ids = list(
+        # Get all providers with evaluations (use set to ensure uniqueness)
+        provider_ids = list(set(
             TTSEvaluation.objects
             .values_list('provider__provider_id', flat=True)
-            .distinct()
-        )
+        ))
     
     comparison_data = []
     
@@ -644,10 +643,10 @@ def health_check(request):
 @api_view(['GET'])
 def get_session(request, session_id):
     try:
-        session = PromptSession.objects.get(id=session_id)
-        serializer = PromptSessionSerializer(session)
+        session = EvaluationSession.objects.get(session_id=session_id)
+        serializer = EvaluationSessionSerializer(session)
         return Response(serializer.data)
-    except PromptSession.DoesNotExist:
+    except EvaluationSession.DoesNotExist:
         return Response(
             {'error': 'Session not found'}, 
             status=status.HTTP_404_NOT_FOUND
