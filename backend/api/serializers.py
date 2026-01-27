@@ -89,7 +89,7 @@ class TTSEvaluationSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = TTSEvaluation
         fields = [
-            'id', 'provider_name', 'voice_id_str', 'success',
+            'id', 'provider_name', 'voice_id_str', 'voice_name', 'success',
             'time_to_first_audio', 'total_synthesis_time', 'playback_jitter',
             'audio_duration', 'realtime_factor', 'created_at'
         ]

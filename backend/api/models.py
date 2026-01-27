@@ -137,6 +137,9 @@ class TTSEvaluation(models.Model):
     # Voice ID string used (stored separately in case voice is deleted)
     voice_id_str = models.CharField(max_length=100)
     
+    # Voice name for display (human-readable name)
+    voice_name = models.CharField(max_length=255, blank=True)
+    
     # Provider-specific model/engine used
     model_id = models.CharField(max_length=100, blank=True)
     

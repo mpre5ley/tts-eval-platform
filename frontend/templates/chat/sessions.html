@@ -128,7 +128,7 @@
                                         ${(data.evaluations || []).map(eval => `
                                             <tr class="${eval.success ? '' : 'error-row'}">
                                                 <td>${eval.provider_name}</td>
-                                                <td>${eval.voice_id_str || '-'}</td>
+                                                <td>${eval.voice_name || eval.voice_id_str || '-'}</td>
                                                 <td>${eval.time_to_first_audio?.toFixed(1) || '-'}</td>
                                                 <td>${eval.total_synthesis_time?.toFixed(1) || '-'}</td>
                                                 <td>${eval.playback_jitter?.toFixed(2) || '-'}</td>

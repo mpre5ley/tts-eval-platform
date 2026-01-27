@@ -186,6 +186,10 @@ def synthesize_batch(request):
     streaming = data.get('streaming', False)
     session_name = data.get('session_name', '')
     
+    # Generate default session name if not provided
+    if not session_name:
+        session_name = f"tts_eval_{timezone.now().strftime('%d%m%y')}"
+    
     # Create evaluation session
     session = EvaluationSession.objects.create(
         text=text,
@@ -205,6 +209,15 @@ def synthesize_batch(request):
         
         provider = TTSServiceManager.get_provider(provider_id)
         
+        # Look up voice name from provider's available voices
+        voice_name = voice_id  # Default to voice_id if name not found
+        if provider:
+            voices = provider.get_voices()
+            for v in voices:
+                if v.get('voice_id') == voice_id:
+                    voice_name = v.get('name', voice_id)
+                    break
+        
         # Get or create provider in database
         db_provider, _ = TTSProvider.objects.get_or_create(
             provider_id=provider_id,
@@ -219,6 +232,7 @@ def synthesize_batch(request):
             session=session,
             provider=db_provider,
             voice_id_str=voice_id,
+            voice_name=voice_name,
             model_id=result.model_id,
             success=result.success,
             error_message=result.error_message,
