@@ -830,6 +830,20 @@ input[type="text"]::placeholder {
 .success-rate.warning { background: rgba(245, 158, 11, 0.2); color: var(--warning-color); }
 .success-rate.bad { background: rgba(239, 68, 68, 0.2); color: var(--error-color); }
 
+.rtf-value {
+    padding: 4px 10px;
+    border-radius: 15px;
+    font-weight: 600;
+}
+
+.rtf-value.good { background: rgba(16, 185, 129, 0.2); color: var(--success-color); }
+.rtf-value.warning { background: rgba(245, 158, 11, 0.2); color: var(--warning-color); }
+.rtf-value.bad { background: rgba(239, 68, 68, 0.2); color: var(--error-color); }
+
+.legend-color.rtf {
+    background: linear-gradient(90deg, var(--success-color), var(--primary-color));
+}
+
 .empty-cell {
     text-align: center;
     color: var(--text-secondary);

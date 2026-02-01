@@ -19,6 +19,34 @@ load_dotenv()
 backend_dir = Path(__file__).resolve().parent.parent
 
 
+def get_audio_duration(audio_data: bytes, audio_format: str = 'mp3') -> Optional[float]:
+    """
+    Calculate audio duration in seconds from audio data.
+    Uses pydub for accurate duration measurement.
+    """
+    try:
+        from pydub import AudioSegment
+        audio = AudioSegment.from_file(BytesIO(audio_data), format=audio_format)
+        return len(audio) / 1000.0  # pydub returns milliseconds
+    except Exception as e:
+        # Fallback: estimate from file size and typical bitrate
+        # MP3 at 128kbps = 16KB per second
+        # MP3 at 192kbps = 24KB per second
+        try:
+            if audio_format == 'mp3':
+                # Assume ~128kbps average
+                return len(audio_data) / 16000.0
+            elif audio_format == 'wav':
+                # Assume 16-bit mono 22050Hz = 44100 bytes per second
+                return len(audio_data) / 44100.0
+            elif audio_format == 'ogg':
+                # Assume ~96kbps
+                return len(audio_data) / 12000.0
+        except:
+            pass
+        return None
+
+
 @dataclass
 class TTSMetrics:
     """Container for TTS synthesis metrics"""
@@ -243,6 +271,10 @@ class ElevenLabsProvider(BaseTTSProvider):
                 metrics.time_to_first_audio = metrics.time_to_first_byte
                 metrics.audio_size = len(audio_data)
                 metrics.audio_format = 'mp3'
+                
+                # Calculate actual audio duration
+                metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
+                
                 metrics.calculate_derived_metrics()
                 
                 return TTSResult(
@@ -313,13 +345,17 @@ class ElevenLabsProvider(BaseTTSProvider):
                 timeout=60
             )
             
+            # TTFB: Time when HTTP headers are received (before reading body)
+            ttfb_time = time.perf_counter() * 1000
+            metrics.time_to_first_byte = ttfb_time - start_time
+            
             if response.status_code == 200:
                 for chunk in response.iter_content(chunk_size=1024):
                     if chunk:
                         current_time = time.perf_counter() * 1000
                         
                         if not first_chunk_received:
-                            metrics.time_to_first_byte = current_time - start_time
+                            # TTFA: Time when first audio data is received
                             metrics.time_to_first_audio = current_time - start_time
                             first_chunk_received = True
                         
@@ -335,6 +371,10 @@ class ElevenLabsProvider(BaseTTSProvider):
                 metrics.audio_format = 'mp3'
                 metrics.chunk_count = len(chunks)
                 metrics.avg_chunk_size = statistics.mean(chunk_sizes) if chunk_sizes else 0
+                
+                # Calculate actual audio duration
+                metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
+                
                 metrics.calculate_derived_metrics()
                 
                 return TTSResult(
@@ -444,6 +484,20 @@ class GoogleTTSProvider(BaseTTSProvider):
         
         return []
     
+    def _get_full_voice_name(self, voice_id: str, language_code: str) -> str:
+        """Get full voice name for Google TTS API.
+        
+        Newer Google TTS voices (star names like 'Achernar') need to be prefixed
+        with the language and model, e.g., 'en-US-Chirp3-HD-Achernar'.
+        Traditional voices (like 'en-US-Standard-A') work as-is.
+        """
+        # Traditional voices contain dashes and language codes
+        if '-' in voice_id:
+            return voice_id
+        
+        # Star name voices need the full format: {lang}-Chirp3-HD-{name}
+        return f"{language_code}-Chirp3-HD-{voice_id}"
+    
     def synthesize(self, text: str, voice_id: str, **kwargs) -> TTSResult:
         """Synthesize text using Google Cloud TTS API"""
         metrics = TTSMetrics()
@@ -452,6 +506,7 @@ class GoogleTTSProvider(BaseTTSProvider):
         metrics.word_count = word_count
         
         language_code = kwargs.get('language_code', 'en-US')
+        full_voice_name = self._get_full_voice_name(voice_id, language_code)
         
         if self.demo_mode:
             return self._demo_synthesis(text, voice_id, metrics)
@@ -466,7 +521,7 @@ class GoogleTTSProvider(BaseTTSProvider):
                     'input': {'text': text},
                     'voice': {
                         'languageCode': language_code,
-                        'name': voice_id,
+                        'name': full_voice_name,
                     },
                     'audioConfig': {
                         'audioEncoding': 'MP3',
@@ -491,6 +546,10 @@ class GoogleTTSProvider(BaseTTSProvider):
                 metrics.time_to_first_audio = metrics.time_to_first_byte
                 metrics.audio_size = len(audio_data)
                 metrics.audio_format = 'mp3'
+                
+                # Calculate actual audio duration
+                metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
+                
                 metrics.calculate_derived_metrics()
                 
                 return TTSResult(
@@ -640,6 +699,10 @@ class AzureTTSProvider(BaseTTSProvider):
                 metrics.audio_format = 'mp3'
                 metrics.sample_rate = 16000
                 metrics.bitrate = 128
+                
+                # Calculate actual audio duration
+                metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
+                
                 metrics.calculate_derived_metrics()
                 
                 return TTSResult(
@@ -819,6 +882,10 @@ class AmazonPollyProvider(BaseTTSProvider):
                 metrics.time_to_first_audio = metrics.time_to_first_byte
                 metrics.audio_size = len(audio_data)
                 metrics.audio_format = 'mp3'
+                
+                # Calculate actual audio duration
+                metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
+                
                 metrics.calculate_derived_metrics()
                 
                 return TTSResult(
@@ -848,9 +915,101 @@ class AmazonPollyProvider(BaseTTSProvider):
             )
     
     def synthesize_streaming(self, text: str, voice_id: str, **kwargs) -> TTSResult:
-        """Amazon Polly streaming synthesis"""
-        return self.synthesize(text, voice_id, **kwargs)
-    
+        """Amazon Polly streaming synthesis - reads audio in chunks for jitter measurement"""
+        metrics = TTSMetrics()
+        metrics.is_streaming = True
+        char_count, word_count = self.get_text_metrics(text)
+        metrics.character_count = char_count
+        metrics.word_count = word_count
+        
+        # Auto-detect best engine if not specified
+        engine = kwargs.get('engine')
+        if not engine and not self.demo_mode:
+            engine = self._get_best_engine(voice_id)
+        elif not engine:
+            engine = 'neural'
+        
+        if self.demo_mode:
+            return self._demo_synthesis(text, voice_id, metrics)
+        
+        try:
+            start_time = time.perf_counter() * 1000
+            chunks = []
+            chunk_sizes = []
+            first_chunk_received = False
+            
+            response = self.client.synthesize_speech(
+                Text=text,
+                VoiceId=voice_id,
+                OutputFormat='mp3',
+                Engine=engine
+            )
+            
+            # TTFB: Time when API response is received
+            ttfb_time = time.perf_counter() * 1000
+            metrics.time_to_first_byte = ttfb_time - start_time
+            
+            if 'AudioStream' in response:
+                audio_stream = response['AudioStream']
+                
+                # Read the stream in chunks (similar to ElevenLabs streaming)
+                chunk_size = 1024
+                while True:
+                    chunk = audio_stream.read(chunk_size)
+                    if not chunk:
+                        break
+                    
+                    current_time = time.perf_counter() * 1000
+                    
+                    if not first_chunk_received:
+                        # TTFA: Time when first audio data is received
+                        metrics.time_to_first_audio = current_time - start_time
+                        first_chunk_received = True
+                    
+                    metrics.chunk_timings.append(current_time - start_time)
+                    chunks.append(chunk)
+                    chunk_sizes.append(len(chunk))
+                
+                end_time = time.perf_counter() * 1000
+                audio_data = b''.join(chunks)
+                
+                metrics.total_synthesis_time = end_time - start_time
+                metrics.audio_size = len(audio_data)
+                metrics.audio_format = 'mp3'
+                metrics.chunk_count = len(chunks)
+                metrics.avg_chunk_size = statistics.mean(chunk_sizes) if chunk_sizes else 0
+                
+                # Calculate actual audio duration
+                metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
+                
+                metrics.calculate_derived_metrics()
+                
+                return TTSResult(
+                    success=True,
+                    audio_data=audio_data,
+                    audio_base64=base64.b64encode(audio_data).decode('utf-8'),
+                    metrics=metrics,
+                    provider_id=self.provider_id,
+                    voice_id=voice_id,
+                )
+            else:
+                return TTSResult(
+                    success=False,
+                    metrics=metrics,
+                    error_message="No audio stream in response",
+                    provider_id=self.provider_id,
+                    voice_id=voice_id,
+                )
+        
+        except Exception as e:
+            return TTSResult(
+                success=False,
+                metrics=metrics,
+                error_message=str(e),
+                provider_id=self.provider_id,
+                voice_id=voice_id,
+            )
+
     def _demo_synthesis(self, text: str, voice_id: str, metrics: TTSMetrics) -> TTSResult:
         """Generate demo response with simulated metrics"""
         import random
@@ -943,6 +1102,10 @@ class OpenAITTSProvider(BaseTTSProvider):
                 metrics.time_to_first_audio = metrics.time_to_first_byte
                 metrics.audio_size = len(audio_data)
                 metrics.audio_format = 'mp3'
+                
+                # Calculate actual audio duration
+                metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
+                
                 metrics.calculate_derived_metrics()
                 
                 return TTSResult(
@@ -1009,13 +1172,17 @@ class OpenAITTSProvider(BaseTTSProvider):
                 timeout=60
             )
             
+            # TTFB is when we get the HTTP response (headers received)
+            ttfb_time = time.perf_counter() * 1000
+            metrics.time_to_first_byte = ttfb_time - start_time
+            
             if response.status_code == 200:
                 for chunk in response.iter_content(chunk_size=1024):
                     if chunk:
                         current_time = time.perf_counter() * 1000
                         
                         if not first_chunk_received:
-                            metrics.time_to_first_byte = current_time - start_time
+                            # TTFA is when we get the first audio chunk
                             metrics.time_to_first_audio = current_time - start_time
                             first_chunk_received = True
                         
@@ -1031,6 +1198,10 @@ class OpenAITTSProvider(BaseTTSProvider):
                 metrics.audio_format = 'mp3'
                 metrics.chunk_count = len(chunks)
                 metrics.avg_chunk_size = statistics.mean(chunk_sizes) if chunk_sizes else 0
+                
+                # Calculate actual audio duration
+                metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
+                
                 metrics.calculate_derived_metrics()
                 
                 return TTSResult(

@@ -15,6 +15,7 @@ urlpatterns = [
     path('api/sessions/<uuid:session_id>/', views.get_session, name='get_session'),
     path('api/metrics/provider/<str:provider_id>/', views.get_provider_metrics, name='get_provider_metrics'),
     path('api/metrics/comparison/', views.get_comparison_metrics, name='get_comparison_metrics'),
+    path('api/metrics/reset/', views.reset_metrics, name='reset_metrics'),
     path('api/benchmarks/create/', views.create_benchmark, name='create_benchmark'),
     path('api/health/', views.health, name='health'),
 ]

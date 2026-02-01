@@ -151,6 +151,19 @@ def create_benchmark(request):
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
 
 
+@require_http_methods(["POST"])
+def reset_metrics(request):
+    """Reset all stored metrics"""
+    try:
+        response = requests.post(
+            f"{settings.BACKEND_API_URL}/metrics/reset/",
+            timeout=30
+        )
+        return JsonResponse(response.json(), status=response.status_code)
+    except requests.RequestException as e:
+        return JsonResponse({'error': f'Backend connection error: {str(e)}'}, status=503)
+
+
 @require_http_methods(["GET"])
 def health(request):
     """Check backend health status"""

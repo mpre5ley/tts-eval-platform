@@ -75,7 +75,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             
-            const streaming = document.getElementById('streaming-mode')?.checked || false;
+            const streaming = true;  // Always use streaming mode for jitter/RTF measurement
             const sessionName = document.getElementById('session-name')?.value || '';
             
             // Show loading state
@@ -143,7 +143,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     <div class="metric-value">${avgTTFA.toFixed(1)}<span class="metric-unit">ms</span></div>
                 </div>
                 <div class="metric-card">
-                    <div class="metric-label">Avg Total Synthesis Time</div>
+                    <div class="metric-label">Avg Total Latency</div>
                     <div class="metric-value">${avgTotal.toFixed(1)}<span class="metric-unit">ms</span></div>
                 </div>
                 <div class="metric-card">
@@ -185,9 +185,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const resultsGrid = document.getElementById('results-cards');
         resultsGrid.innerHTML = data.results.map(result => createResultCard(result)).join('');
         
-        // Initialize audio players for client-side jitter measurement
-        initializeAudioPlayers();
-        
         // Scroll to results
         results.scrollIntoView({ behavior: 'smooth' });
     }
@@ -200,15 +197,11 @@ document.addEventListener('DOMContentLoaded', function() {
         if (result.success && result.audio_base64) {
             audioSection = `
                 <div class="audio-player">
-                    <div class="audio-player-label">Audio Playback (measures client-side jitter)</div>
+                    <div class="audio-player-label">Audio Playback</div>
                     <audio controls data-evaluation-id="${result.evaluation_id || ''}"
                            src="data:audio/${metrics.audio_format || 'mp3'};base64,${result.audio_base64}">
                         Your browser does not support the audio element.
                     </audio>
-                    <div class="client-jitter hidden">
-                        <span class="client-jitter-label">Client Jitter:</span>
-                        <span class="client-jitter-value">-</span>
-                    </div>
                 </div>
             `;
         }
@@ -240,7 +233,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div class="result-metric-value">${metrics.time_to_first_audio?.toFixed(1) || '-'} ms</div>
                     </div>
                     <div class="result-metric">
-                        <div class="result-metric-label">Total Synthesis Time</div>
+                        <div class="result-metric-label">Total Latency</div>
                         <div class="result-metric-value">${metrics.total_synthesis_time?.toFixed(1) || '-'} ms</div>
                     </div>
                     <div class="result-metric">
@@ -257,12 +250,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                     ${metrics.is_streaming ? `
                     <div class="result-metric">
-                        <div class="result-metric-label">Server Jitter</div>
+                        <div class="result-metric-label">Chunk Jitter</div>
                         <div class="result-metric-value">${metrics.playback_jitter?.toFixed(2) || '-'} ms</div>
-                    </div>
-                    <div class="result-metric">
-                        <div class="result-metric-label">Chunk Count</div>
-                        <div class="result-metric-value">${metrics.chunk_count || '-'}</div>
                     </div>
                     ` : ''}
                 </div>
@@ -271,45 +260,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 ${errorSection}
             </div>
         `;
-    }
-    
-    function initializeAudioPlayers() {
-        // Client-side playback jitter measurement
-        document.querySelectorAll('.audio-player audio').forEach(audio => {
-            const jitterContainer = audio.parentElement.querySelector('.client-jitter');
-            const jitterValue = audio.parentElement.querySelector('.client-jitter-value');
-            
-            let playbackTimes = [];
-            let lastTime = null;
-            
-            audio.addEventListener('playing', function() {
-                playbackTimes = [];
-                lastTime = performance.now();
-            });
-            
-            audio.addEventListener('timeupdate', function() {
-                const now = performance.now();
-                if (lastTime) {
-                    playbackTimes.push(now - lastTime);
-                }
-                lastTime = now;
-            });
-            
-            audio.addEventListener('ended', function() {
-                if (playbackTimes.length > 2) {
-                    const jitter = calculateJitter(playbackTimes);
-                    jitterValue.textContent = jitter.toFixed(2) + ' ms';
-                    jitterContainer.classList.remove('hidden');
-                }
-            });
-        });
-    }
-    
-    function calculateJitter(times) {
-        if (times.length < 2) return 0;
-        const mean = times.reduce((a, b) => a + b, 0) / times.length;
-        const variance = times.reduce((sum, t) => sum + Math.pow(t - mean, 2), 0) / times.length;
-        return Math.sqrt(variance);
     }
     
     function showError(message) {

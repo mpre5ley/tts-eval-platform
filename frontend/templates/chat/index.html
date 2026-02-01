@@ -20,7 +20,7 @@
     <div class="container">
         <header class="page-header">
             <h1>Speech Synthesis Evaluation</h1>
-            <p class="subtitle">Compare TTS providers: Latency, Time-to-First-Audio, Synthesis Duration, and Playback Jitter</p>
+            <p class="subtitle">Compare TTS providers: Latency, Time-to-First-Audio, Synthesis Duration, and Chunk Jitter</p>
         </header>
         
         <form id="synthesis-form">
@@ -77,15 +77,6 @@
 
             <!-- Options -->
             <div class="form-section options-section">
-                <div class="option-group">
-                    <label class="option-checkbox">
-                        <input type="checkbox" id="streaming-mode" name="streaming">
-                        <span class="checkmark"></span>
-                        Enable Streaming Mode
-                    </label>
-                    <span class="option-hint">Measure chunk-by-chunk delivery for jitter analysis</span>
-                </div>
-                
                 <div class="option-group">
                     <label for="session-name">Session Name (optional):</label>
                     <input type="text" id="session-name" name="session_name" 

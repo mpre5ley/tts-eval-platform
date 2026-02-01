@@ -465,6 +465,8 @@ def get_comparison_metrics(request):
             avg_ttfa=Avg('time_to_first_audio'),
             avg_total=Avg('total_synthesis_time'),
             avg_jitter=Avg('playback_jitter'),
+            avg_audio_duration=Avg('audio_duration'),
+            avg_rtf=Avg('realtime_factor'),
         )
         
         synthesis_times = list(evaluations.values_list('total_synthesis_time', flat=True))
@@ -490,6 +492,8 @@ def get_comparison_metrics(request):
             'avg_ttfa': round(agg['avg_ttfa'], 2) if agg['avg_ttfa'] else None,
             'avg_total_time': round(agg['avg_total'], 2) if agg['avg_total'] else None,
             'avg_jitter': round(agg['avg_jitter'], 2) if agg['avg_jitter'] else None,
+            'avg_audio_duration': round(agg['avg_audio_duration'], 2) if agg['avg_audio_duration'] else None,
+            'avg_rtf': round(agg['avg_rtf'], 2) if agg['avg_rtf'] else None,
             'p50_time': round(p50, 2) if p50 else None,
             'p95_time': round(p95, 2) if p95 else None,
             'p99_time': round(p99, 2) if p99 else None,
@@ -501,6 +505,31 @@ def get_comparison_metrics(request):
     comparison_data.sort(key=lambda x: x.get('avg_total_time') or float('inf'))
     
     return Response({'providers': comparison_data})
+
+
+@api_view(['POST'])
+def reset_metrics(request):
+    """Reset all stored metrics by deleting all evaluations and sessions"""
+    try:
+        # Delete all evaluations (this will cascade or we delete explicitly)
+        eval_count = TTSEvaluation.objects.count()
+        TTSEvaluation.objects.all().delete()
+        
+        # Delete all sessions
+        session_count = EvaluationSession.objects.count()
+        EvaluationSession.objects.all().delete()
+        
+        return Response({
+            'success': True,
+            'message': f'Reset complete. Deleted {eval_count} evaluations and {session_count} sessions.',
+            'deleted_evaluations': eval_count,
+            'deleted_sessions': session_count,
+        })
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # ========== Benchmark Endpoints ==========

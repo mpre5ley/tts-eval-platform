@@ -35,11 +35,15 @@
             </div>
             <div class="legend-item">
                 <span class="legend-color total"></span>
-                <span>Total: Complete Synthesis Time</span>
+                <span>Total: Total Latency</span>
             </div>
             <div class="legend-item">
                 <span class="legend-color jitter"></span>
-                <span>Jitter: Playback Variation</span>
+                <span>Jitter: Chunk Arrival Variation</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color rtf"></span>
+                <span>RTF: Real-time Factor (>1 = faster than real-time)</span>
             </div>
         </div>
 
@@ -53,7 +57,9 @@
                         <th>Success Rate</th>
                         <th>Avg TTFB (ms)</th>
                         <th>Avg TTFA (ms)</th>
-                        <th>Avg Total (ms)</th>
+                        <th>Avg Total Latency (ms)</th>
+                        <th>Avg Duration (s)</th>
+                        <th>Avg RTF</th>
                         <th>Avg Jitter (ms)</th>
                         <th>P50 (ms)</th>
                         <th>P95 (ms)</th>
@@ -74,13 +80,19 @@
                         <td>{{ metric.avg_ttfb|floatformat:1|default:"-" }}</td>
                         <td>{{ metric.avg_ttfa|floatformat:1|default:"-" }}</td>
                         <td>{{ metric.avg_total_time|floatformat:1|default:"-" }}</td>
+                        <td>{{ metric.avg_audio_duration|floatformat:2|default:"-" }}</td>
+                        <td>
+                            <span class="rtf-value {% if metric.avg_rtf >= 1.5 %}good{% elif metric.avg_rtf >= 1.0 %}warning{% else %}bad{% endif %}">
+                                {{ metric.avg_rtf|floatformat:2|default:"-" }}
+                            </span>
+                        </td>
                         <td>{{ metric.avg_jitter|floatformat:2|default:"-" }}</td>
                         <td>{{ metric.p50_time|floatformat:1|default:"-" }}</td>
                         <td>{{ metric.p95_time|floatformat:1|default:"-" }}</td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="9" class="empty-cell">
+                        <td colspan="11" class="empty-cell">
                             No metrics data available yet. Run some evaluations first.
                         </td>
                     </tr>
@@ -144,8 +156,8 @@
 
         <!-- Refresh Button -->
         <div class="actions-bar">
-            <button onclick="location.reload()" class="secondary-btn">
-                Refresh Metrics
+            <button onclick="resetMetrics()" class="secondary-btn" id="reset-btn">
+                Reset All Metrics
             </button>
             <a href="{% url 'index' %}" class="primary-btn">
                 Run New Evaluation
@@ -165,12 +177,12 @@
                     <p>The time until the first playable audio chunk is available. Critical for real-time applications.</p>
                 </div>
                 <div class="info-card">
-                    <h4>Total Synthesis Time</h4>
+                    <h4>Total Latency</h4>
                     <p>The complete duration from request to fully received audio. Includes all processing and transfer time.</p>
                 </div>
                 <div class="info-card">
-                    <h4>Playback Jitter</h4>
-                    <p>The variation in timing between audio chunks during streaming. Lower jitter means smoother playback.</p>
+                    <h4>Chunk Jitter</h4>
+                    <p>The standard deviation of inter-chunk arrival times during streaming. Lower jitter means more consistent delivery and smoother playback.</p>
                 </div>
                 <div class="info-card">
                     <h4>Real-time Factor (RTF)</h4>
@@ -210,6 +222,42 @@
                 bar.style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
             }
         });
+        
+        // Reset all metrics
+        async function resetMetrics() {
+            if (!confirm('Are you sure you want to reset all metrics? This will delete all evaluations and sessions.')) {
+                return;
+            }
+            
+            const btn = document.getElementById('reset-btn');
+            const originalText = btn.textContent;
+            btn.textContent = 'Resetting...';
+            btn.disabled = true;
+            
+            try {
+                const response = await fetch('/api/metrics/reset/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(data.message);
+                    location.reload();
+                } else {
+                    alert('Error resetting metrics: ' + (data.error || 'Unknown error'));
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                }
+            } catch (error) {
+                alert('Error resetting metrics: ' + error.message);
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+        }
     </script>
 </body>
 </html>

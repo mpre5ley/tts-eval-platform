@@ -24,6 +24,7 @@ urlpatterns = [
     # Metrics endpoints
     path('metrics/provider/<str:provider_id>/', views.get_provider_metrics, name='get_provider_metrics'),
     path('metrics/comparison/', views.get_comparison_metrics, name='get_comparison_metrics'),
+    path('metrics/reset/', views.reset_metrics, name='reset_metrics'),
     
     # Benchmark endpoints
     path('benchmarks/', views.get_benchmarks, name='get_benchmarks'),
