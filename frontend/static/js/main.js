@@ -237,6 +237,10 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div class="result-metric-value">${metrics.total_synthesis_time?.toFixed(1) || '-'} ms</div>
                     </div>
                     <div class="result-metric">
+                        <div class="result-metric-label">Real-time Factor</div>
+                        <div class="result-metric-value">${metrics.realtime_factor?.toFixed(2) || '-'}x</div>
+                    </div>
+                    <div class="result-metric">
                         <div class="result-metric-label">Audio Duration</div>
                         <div class="result-metric-value">${metrics.audio_duration?.toFixed(2) || '-'} s</div>
                     </div>
@@ -244,14 +248,14 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div class="result-metric-label">Audio Size</div>
                         <div class="result-metric-value">${formatBytes(metrics.audio_size)}</div>
                     </div>
-                    <div class="result-metric">
-                        <div class="result-metric-label">Real-time Factor</div>
-                        <div class="result-metric-value">${metrics.realtime_factor?.toFixed(2) || '-'}x</div>
-                    </div>
                     ${metrics.is_streaming ? `
                     <div class="result-metric">
                         <div class="result-metric-label">Chunk Jitter</div>
                         <div class="result-metric-value">${metrics.playback_jitter?.toFixed(2) || '-'} ms</div>
+                    </div>
+                    <div class="result-metric">
+                        <div class="result-metric-label">Avg Chunk Size</div>
+                        <div class="result-metric-value">${formatBytes(metrics.avg_chunk_size)}</div>
                     </div>
                     ` : ''}
                 </div>

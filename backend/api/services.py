@@ -801,12 +801,17 @@ class AmazonPollyProvider(BaseTTSProvider):
                 self.client = None
     
     def get_voices(self) -> List[Dict[str, Any]]:
-        """Get available Amazon Polly voices"""
+        """Get available Amazon Polly voices that support the generative engine.
+        
+        Only voices with generative engine support are returned to ensure
+        accurate streaming metrics (TTFB, TTFA, jitter).
+        """
         if self.demo_mode:
             return settings.TTS_PROVIDERS.get('amazon', {}).get('demo_voices', [])
         
         try:
             response = self.client.describe_voices()
+            # Only return voices that support the generative engine
             return [
                 {
                     'voice_id': v['Id'],
@@ -817,6 +822,7 @@ class AmazonPollyProvider(BaseTTSProvider):
                     'supported_engines': v.get('SupportedEngines', ['standard']),
                 }
                 for v in response.get('Voices', [])
+                if 'generative' in v.get('SupportedEngines', [])
             ]
         except Exception as e:
             print(f"Error fetching Amazon Polly voices: {e}")
@@ -824,25 +830,13 @@ class AmazonPollyProvider(BaseTTSProvider):
         return []
     
     def _get_best_engine(self, voice_id: str) -> str:
-        """Get the best available engine for a voice"""
-        try:
-            # Get voice info to check supported engines
-            response = self.client.describe_voices()
-            for voice in response.get('Voices', []):
-                if voice['Id'] == voice_id:
-                    engines = voice.get('SupportedEngines', ['standard'])
-                    # Prefer neural > generative > long-form > standard
-                    if 'neural' in engines:
-                        return 'neural'
-                    elif 'generative' in engines:
-                        return 'generative'
-                    elif 'long-form' in engines:
-                        return 'long-form'
-                    else:
-                        return 'standard'
-        except Exception:
-            pass
-        return 'standard'  # Fallback to standard which all voices support
+        """Get the generative engine for accurate streaming metrics.
+        
+        Only generative engine provides true streaming with accurate TTFB, TTFA, 
+        and jitter measurements. Other engines pre-generate audio before streaming.
+        """
+        # Always use generative for accurate streaming metrics
+        return 'generative'
     
     def synthesize(self, text: str, voice_id: str, **kwargs) -> TTSResult:
         """Synthesize text using Amazon Polly"""
@@ -851,12 +845,8 @@ class AmazonPollyProvider(BaseTTSProvider):
         metrics.character_count = char_count
         metrics.word_count = word_count
         
-        # Auto-detect best engine if not specified
-        engine = kwargs.get('engine')
-        if not engine and not self.demo_mode:
-            engine = self._get_best_engine(voice_id)
-        elif not engine:
-            engine = 'neural'
+        # Always use generative engine for accurate metrics
+        engine = 'generative'
         
         if self.demo_mode:
             return self._demo_synthesis(text, voice_id, metrics)
@@ -922,12 +912,8 @@ class AmazonPollyProvider(BaseTTSProvider):
         metrics.character_count = char_count
         metrics.word_count = word_count
         
-        # Auto-detect best engine if not specified
-        engine = kwargs.get('engine')
-        if not engine and not self.demo_mode:
-            engine = self._get_best_engine(voice_id)
-        elif not engine:
-            engine = 'neural'
+        # Always use generative engine for accurate streaming metrics
+        engine = 'generative'
         
         if self.demo_mode:
             return self._demo_synthesis(text, voice_id, metrics)
