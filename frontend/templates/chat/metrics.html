@@ -108,23 +108,16 @@
             
             <!-- Latency Chart -->
             <div class="chart-container">
-                <h3>Average Latency Comparison</h3>
+                <h3>Total Latency Comparison</h3>
                 <div class="bar-chart" id="latency-chart">
                     {% for metric in metrics %}
                     <div class="chart-row">
                         <span class="chart-label">{{ metric.provider_name }}</span>
                         <div class="chart-bars">
-                            <div class="bar ttfb" 
-                                 style="width: {% widthratio metric.avg_ttfb|default:0 500 100 %}%"
-                                 title="TTFB: {{ metric.avg_ttfb|floatformat:1|default:'-' }}ms">
-                            </div>
-                            <div class="bar ttfa" 
-                                 style="width: {% widthratio metric.avg_ttfa|default:0 500 100 %}%"
-                                 title="TTFA: {{ metric.avg_ttfa|floatformat:1|default:'-' }}ms">
-                            </div>
                             <div class="bar total" 
-                                 style="width: {% widthratio metric.avg_total_time|default:0 2000 100 %}%"
-                                 title="Total: {{ metric.avg_total_time|floatformat:1|default:'-' }}ms">
+                                 data-value="{{ metric.avg_total_time|default:0 }}"
+                                 data-metric="total"
+                                 title="Total Latency: {{ metric.avg_total_time|floatformat:1|default:'-' }}ms">
                             </div>
                         </div>
                         <span class="chart-value">{{ metric.avg_total_time|floatformat:0|default:"-" }}ms</span>
@@ -201,6 +194,39 @@
     </footer>
 
     <script>
+        // Calculate proportional bar widths based on max values
+        function calculateProportionalBars() {
+            const bars = document.querySelectorAll('.bar[data-value]');
+            
+            // Find max values for each metric type
+            const maxValues = { ttfb: 0, ttfa: 0, total: 0 };
+            
+            bars.forEach(bar => {
+                const value = parseFloat(bar.dataset.value) || 0;
+                const metric = bar.dataset.metric;
+                if (value > maxValues[metric]) {
+                    maxValues[metric] = value;
+                }
+            });
+            
+            // Set bar widths proportionally (max value = 100%)
+            bars.forEach(bar => {
+                const value = parseFloat(bar.dataset.value) || 0;
+                const metric = bar.dataset.metric;
+                const maxValue = maxValues[metric];
+                
+                if (maxValue > 0) {
+                    const percentage = (value / maxValue) * 100;
+                    bar.style.width = percentage + '%';
+                } else {
+                    bar.style.width = '0%';
+                }
+            });
+        }
+        
+        // Run on page load
+        calculateProportionalBars();
+        
         // Add interactivity for bar tooltips
         document.querySelectorAll('.bar').forEach(bar => {
             bar.addEventListener('mouseenter', function() {
