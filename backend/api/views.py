@@ -188,7 +188,7 @@ def synthesize_batch(request):
     
     # Generate default session name if not provided
     if not session_name:
-        session_name = f"tts_eval_{timezone.now().strftime('%d%m%y')}"
+        session_name = f"tts_eval_{timezone.now().strftime('%H_%M_%S_%d_%m_%Y')}"
     
     # Create evaluation session
     session = EvaluationSession.objects.create(
@@ -694,3 +694,238 @@ def get_session(request, session_id):
             {'error': 'Session not found'}, 
             status=status.HTTP_404_NOT_FOUND
         )
+
+
+# ========== Batch CSV Upload ==========
+
+@api_view(['POST'])
+def batch_csv_upload(request):
+    """
+    Process batch evaluations from a CSV file.
+    CSV format: One prompt per line, no header.
+    Providers and session_name come from the form data.
+    Returns batch_id and tasks for progress tracking.
+    """
+    import uuid
+    
+    if 'file' not in request.FILES:
+        return Response(
+            {'error': 'No CSV file provided'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    csv_file = request.FILES['file']
+    
+    # Validate file type
+    if not csv_file.name.endswith('.csv'):
+        return Response(
+            {'error': 'File must be a CSV'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Get providers and session_name from form data
+    providers_str = request.POST.get('providers', '')
+    session_name = request.POST.get('session_name', '').strip()
+    
+    if not providers_str:
+        return Response(
+            {'error': 'At least one provider must be selected'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Parse providers (comma-separated)
+    providers = [p.strip().lower() for p in providers_str.split(',') if p.strip()]
+    
+    # Validate all providers exist
+    for provider in providers:
+        if provider not in settings.TTS_PROVIDERS:
+            return Response(
+                {'error': f'Unknown provider: {provider}. Valid providers: {", ".join(settings.TTS_PROVIDERS.keys())}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    # Generate session name if not provided
+    if not session_name:
+        session_name = f"batch_tts_eval_{timezone.now().strftime('%H_%M_%S_%d_%m_%Y')}"
+    
+    try:
+        # Read prompts from CSV (one per line, no header)
+        decoded = csv_file.read().decode('utf-8')
+        lines = decoded.strip().split('\n')
+        
+        # Parse prompts (skip empty lines)
+        prompts = [line.strip() for line in lines if line.strip()]
+        
+        if not prompts:
+            return Response(
+                {'error': 'No prompts found in CSV'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create tasks: each prompt × each provider
+        tasks = []
+        task_num = 1
+        for prompt in prompts:
+            for provider in providers:
+                tasks.append({
+                    'prompt': prompt,
+                    'provider': provider,
+                    'session_name': session_name,
+                    'task_num': task_num
+                })
+                task_num += 1
+        
+        # Generate batch ID
+        batch_id = str(uuid.uuid4())
+        
+        return Response({
+            'success': True,
+            'batch_id': batch_id,
+            'total_tasks': len(tasks),
+            'prompts_count': len(prompts),
+            'providers_count': len(providers),
+            'session_name': session_name,
+            'tasks': tasks
+        })
+        
+    except Exception as e:
+        return Response(
+            {'error': f'Error processing CSV: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+def batch_execute_task(request):
+    """
+    Execute a single task from a batch.
+    This allows the frontend to control progress and handle tasks one at a time.
+    """
+    data = request.data
+    
+    prompt = data.get('prompt', '').strip()
+    provider_id = data.get('provider', '').strip().lower()
+    session_name = data.get('session_name', '').strip()
+    voice_id = data.get('voice_id')  # Optional - if not provided, use first voice
+    
+    if not prompt or not provider_id:
+        return Response(
+            {'error': 'prompt and provider are required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Get provider and default voice if not specified
+    provider = TTSServiceManager.get_provider(provider_id)
+    if not provider:
+        return Response(
+            {'error': f'Unknown provider: {provider_id}'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    # Use first available voice if not specified
+    if not voice_id:
+        voices = provider.get_voices()
+        if voices:
+            voice_id = voices[0]['voice_id']
+        else:
+            return Response(
+                {'error': f'No voices available for provider: {provider_id}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    # Generate session name if not provided
+    if not session_name:
+        session_name = f"batch_{timezone.now().strftime('%d%m%y')}"
+    
+    # Get or create session for this session_name
+    session, created = EvaluationSession.objects.get_or_create(
+        name=session_name,
+        defaults={
+            'text': prompt,  # Will be updated if session already exists
+            'status': 'running'
+        }
+    )
+    
+    # If session existed, append to text (for reference)
+    if not created:
+        # Don't modify existing session text
+        pass
+    
+    # Perform synthesis (always streaming for accurate metrics)
+    streaming = True
+    result = TTSServiceManager.synthesize(provider_id, prompt, voice_id, streaming)
+    
+    # Look up voice name
+    voice_name = voice_id
+    voices = provider.get_voices()
+    for v in voices:
+        if v.get('voice_id') == voice_id:
+            voice_name = v.get('name', voice_id)
+            break
+    
+    # Get or create provider in database
+    db_provider, _ = TTSProvider.objects.get_or_create(
+        provider_id=provider_id,
+        defaults={
+            'name': provider.provider_name,
+            'description': settings.TTS_PROVIDERS.get(provider_id, {}).get('description', ''),
+        }
+    )
+    
+    # Create evaluation record
+    evaluation = TTSEvaluation.objects.create(
+        session=session,
+        provider=db_provider,
+        voice_id_str=voice_id,
+        voice_name=voice_name,
+        model_id=result.model_id,
+        success=result.success,
+        error_message=result.error_message,
+        time_to_first_byte=result.metrics.time_to_first_byte,
+        time_to_first_audio=result.metrics.time_to_first_audio,
+        total_synthesis_time=result.metrics.total_synthesis_time,
+        network_latency=result.metrics.network_latency,
+        audio_duration=result.metrics.audio_duration,
+        audio_size=result.metrics.audio_size,
+        audio_format=result.metrics.audio_format,
+        sample_rate=result.metrics.sample_rate,
+        bitrate=result.metrics.bitrate,
+        is_streaming=result.metrics.is_streaming,
+        chunk_count=result.metrics.chunk_count,
+        avg_chunk_size=result.metrics.avg_chunk_size,
+        chunk_timings=result.metrics.chunk_timings,
+        playback_jitter=result.metrics.playback_jitter,
+        min_chunk_delay=result.metrics.min_chunk_delay,
+        max_chunk_delay=result.metrics.max_chunk_delay,
+        avg_chunk_delay=result.metrics.avg_chunk_delay,
+        character_count=result.metrics.character_count,
+        word_count=result.metrics.word_count,
+        chars_per_second=result.metrics.chars_per_second,
+        realtime_factor=result.metrics.realtime_factor,
+        request_params={'prompt': prompt},
+        response_headers=result.response_headers,
+        audio_base64=result.audio_base64 or '',
+    )
+    
+    # Update session status
+    session.status = 'completed'
+    session.save()
+    
+    return Response({
+        'success': result.success,
+        'evaluation_id': evaluation.id,
+        'session_id': str(session.session_id),
+        'provider_id': provider_id,
+        'provider_name': provider.provider_name,
+        'voice_id': voice_id,
+        'prompt': prompt[:50] + '...' if len(prompt) > 50 else prompt,
+        'metrics': {
+            'time_to_first_byte': result.metrics.time_to_first_byte,
+            'time_to_first_audio': result.metrics.time_to_first_audio,
+            'total_synthesis_time': result.metrics.total_synthesis_time,
+            'audio_duration': result.metrics.audio_duration,
+            'realtime_factor': result.metrics.realtime_factor,
+            'playback_jitter': result.metrics.playback_jitter,
+        },
+        'error_message': result.error_message,
+    })

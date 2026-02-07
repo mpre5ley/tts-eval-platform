@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Evaluation Sessions - TTS Evaluation Platform</title>
     {% load static %}
+    {% load session_filters %}
     <link rel="stylesheet" href="{% static 'css/style.css' %}">
 </head>
 <body>
@@ -27,7 +28,7 @@
             {% for session in sessions %}
             <div class="session-card" data-session-id="{{ session.session_id }}">
                 <div class="session-header">
-                    <h3>{{ session.name|default:"Unnamed Session" }}</h3>
+                    <h3>{{ session.name|format_session_name }}</h3>
                     <span class="session-status status-{{ session.status }}">{{ session.status }}</span>
                 </div>
                 

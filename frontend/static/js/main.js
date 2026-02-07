@@ -9,6 +9,24 @@ document.addEventListener('DOMContentLoaded', function() {
     const charCountEl = document.getElementById('char-count');
     const wordCountEl = document.getElementById('word-count');
     
+    // Tab navigation
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    tabBtns.forEach(btn => {
+        btn.addEventListener('click', function() {
+            const tabId = this.dataset.tab;
+            
+            // Update active tab button
+            tabBtns.forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            
+            // Show/hide tab content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.add('hidden');
+            });
+            document.getElementById(`${tabId}-tab`).classList.remove('hidden');
+        });
+    });
+    
     // Character and word counter
     if (textInput && charCountEl && wordCountEl) {
         textInput.addEventListener('input', function() {
@@ -303,4 +321,252 @@ document.addEventListener('DOMContentLoaded', function() {
         div.textContent = text;
         return div.innerHTML;
     }
+    
+    // ========== Batch CSV Upload ==========
+    
+    const csvFileInput = document.getElementById('csv-file-input');
+    const csvDropZone = document.getElementById('csv-drop-zone');
+    const startBatchBtn = document.getElementById('start-batch-btn');
+    const selectedFileName = document.getElementById('selected-file-name');
+    const batchProgress = document.getElementById('batch-progress');
+    
+    let batchTasks = [];
+    let selectedFile = null;
+    
+    // File input change
+    if (csvFileInput) {
+        csvFileInput.addEventListener('change', function(e) {
+            if (e.target.files.length > 0) {
+                handleFileSelection(e.target.files[0]);
+            }
+        });
+    }
+    
+    // Drag and drop
+    if (csvDropZone) {
+        csvDropZone.addEventListener('click', () => csvFileInput?.click());
+        
+        csvDropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            csvDropZone.classList.add('dragover');
+        });
+        
+        csvDropZone.addEventListener('dragleave', () => {
+            csvDropZone.classList.remove('dragover');
+        });
+        
+        csvDropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            csvDropZone.classList.remove('dragover');
+            
+            if (e.dataTransfer.files.length > 0) {
+                const file = e.dataTransfer.files[0];
+                if (file.name.endsWith('.csv')) {
+                    handleFileSelection(file);
+                } else {
+                    alert('Please upload a CSV file');
+                }
+            }
+        });
+    }
+    
+    function handleFileSelection(file) {
+        selectedFile = file;
+        selectedFileName.textContent = `Selected: ${file.name}`;
+        selectedFileName.classList.remove('hidden');
+        updateBatchButtonState();
+    }
+    
+    // Update batch button state based on file and provider selection
+    function updateBatchButtonState() {
+        const selectedProviders = document.querySelectorAll('input[name="batch_provider"]:checked');
+        startBatchBtn.disabled = !(selectedFile && selectedProviders.length > 0);
+    }
+    
+    // Listen for provider checkbox changes
+    document.querySelectorAll('input[name="batch_provider"]').forEach(checkbox => {
+        checkbox.addEventListener('change', updateBatchButtonState);
+    });
+    
+    // Start batch button
+    if (startBatchBtn) {
+        startBatchBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+            
+            // Get selected providers
+            const selectedProviders = Array.from(document.querySelectorAll('input[name="batch_provider"]:checked'))
+                .map(cb => cb.value);
+            
+            if (selectedProviders.length === 0) {
+                alert('Please select at least one TTS provider');
+                return;
+            }
+            
+            // Get session name
+            const sessionName = document.getElementById('batch-session-name').value.trim();
+            
+            // Upload and parse CSV with providers and session name
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('providers', selectedProviders.join(','));
+            formData.append('session_name', sessionName);
+            
+            startBatchBtn.disabled = true;
+            startBatchBtn.querySelector('.btn-text').classList.add('hidden');
+            startBatchBtn.querySelector('.btn-loading').classList.remove('hidden');
+            
+            try {
+                const response = await fetch('/api/batch/upload/', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    resetBatchUI();
+                    return;
+                }
+                
+                batchTasks = data.tasks;
+                executeBatchTasks(batchTasks);
+                
+            } catch (error) {
+                alert('Error uploading CSV: ' + error.message);
+                resetBatchUI();
+            }
+        });
+    }
+    
+    async function executeBatchTasks(tasks) {
+        // Show progress section
+        batchProgress.classList.remove('hidden');
+        
+        const progressBar = document.getElementById('batch-progress-bar');
+        const progressCount = document.getElementById('progress-count');
+        const elapsedTime = document.getElementById('elapsed-time');
+        const successCount = document.getElementById('success-count');
+        const failedCount = document.getElementById('failed-count');
+        const currentTaskText = document.getElementById('current-task-text');
+        const logEntries = document.getElementById('log-entries');
+        
+        // Reset counters
+        let completed = 0;
+        let success = 0;
+        let failed = 0;
+        const total = tasks.length;
+        const startTime = Date.now();
+        
+        // Update elapsed time every second
+        const timerInterval = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+            const seconds = (elapsed % 60).toString().padStart(2, '0');
+            elapsedTime.textContent = `${minutes}:${seconds}`;
+        }, 1000);
+        
+        progressCount.textContent = `0 / ${total}`;
+        logEntries.innerHTML = '';
+        
+        // Execute tasks sequentially
+        for (let i = 0; i < tasks.length; i++) {
+            const task = tasks[i];
+            currentTaskText.textContent = `${task.provider}: "${task.prompt.substring(0, 50)}${task.prompt.length > 50 ? '...' : ''}"`;
+            
+            try {
+                const response = await fetch('/api/batch/execute/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        prompt: task.prompt,
+                        provider: task.provider,
+                        session_name: task.session_name
+                    })
+                });
+                
+                const result = await response.json();
+                
+                completed++;
+                if (result.success) {
+                    success++;
+                    addLogEntry(logEntries, task, result, true);
+                } else {
+                    failed++;
+                    addLogEntry(logEntries, task, result, false);
+                }
+                
+            } catch (error) {
+                completed++;
+                failed++;
+                addLogEntry(logEntries, task, { error_message: error.message }, false);
+            }
+            
+            // Update progress
+            const percent = (completed / total) * 100;
+            progressBar.style.width = `${percent}%`;
+            progressBar.textContent = `${Math.round(percent)}%`;
+            progressCount.textContent = `${completed} / ${total}`;
+            successCount.textContent = success;
+            failedCount.textContent = failed;
+        }
+        
+        // Complete
+        clearInterval(timerInterval);
+        currentTaskText.textContent = `Batch complete! ${success} succeeded, ${failed} failed.`;
+        resetBatchUI();
+    }
+    
+    function addLogEntry(container, task, result, isSuccess) {
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${isSuccess ? 'success' : 'error'}`;
+        
+        const metrics = result.metrics || {};
+        const metricsHtml = isSuccess ? `
+            <div class="log-metrics">
+                <div class="log-metric">Latency: <span>${metrics.total_synthesis_time?.toFixed(0) || '-'}ms</span></div>
+                <div class="log-metric">RTF: <span>${metrics.realtime_factor?.toFixed(2) || '-'}x</span></div>
+            </div>
+        ` : `<div class="log-metric error-text">${escapeHtml(result.error_message || 'Failed')}</div>`;
+        
+        entry.innerHTML = `
+            <div>
+                <span class="log-provider">${escapeHtml(task.provider)}</span>
+                <span class="log-prompt">${escapeHtml(task.prompt.substring(0, 40))}${task.prompt.length > 40 ? '...' : ''}</span>
+            </div>
+            ${metricsHtml}
+        `;
+        
+        container.insertBefore(entry, container.firstChild);
+    }
+    
+    function resetBatchUI() {
+        startBatchBtn.disabled = false;
+        startBatchBtn.querySelector('.btn-text').classList.remove('hidden');
+        startBatchBtn.querySelector('.btn-loading').classList.add('hidden');
+    }
 });
+
+// Download sample CSV
+function downloadSampleCSV() {
+    const csvContent = `Hello, how are you today?
+The quick brown fox jumps over the lazy dog.
+Welcome to our platform.
+Please leave a message after the beep.
+Your order has been confirmed and will arrive tomorrow.
+Press 1 for sales, press 2 for support.
+Thank you for calling. Have a great day!
+The weather today is sunny with a high of 75 degrees.`;
+    
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'sample_prompts.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}

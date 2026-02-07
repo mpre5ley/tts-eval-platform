@@ -15,6 +15,10 @@ urlpatterns = [
     path('synthesize/', views.synthesize, name='synthesize'),
     path('synthesize/batch/', views.synthesize_batch, name='synthesize_batch'),
     
+    # Batch CSV upload endpoints
+    path('batch/upload/', views.batch_csv_upload, name='batch_csv_upload'),
+    path('batch/execute/', views.batch_execute_task, name='batch_execute_task'),
+    
     # Evaluation endpoints
     path('sessions/', views.get_sessions, name='get_sessions'),
     path('sessions/<uuid:session_id>/', views.get_session, name='get_session'),

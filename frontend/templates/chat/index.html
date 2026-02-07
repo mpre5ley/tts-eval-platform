@@ -22,7 +22,15 @@
             <h1>Speech Synthesis Evaluation</h1>
             <p class="subtitle">Compare TTS providers: Latency, Time-to-First-Audio, Synthesis Duration, and Chunk Jitter</p>
         </header>
-        
+
+        <!-- Tab Navigation -->
+        <div class="tab-navigation">
+            <button class="tab-btn active" data-tab="single">Single Evaluation</button>
+            <button class="tab-btn" data-tab="batch">Batch CSV Upload</button>
+        </div>
+
+        <!-- Single Evaluation Tab -->
+        <div id="single-tab" class="tab-content active">
         <form id="synthesis-form">
             <!-- Text Input -->
             <div class="form-section">
@@ -80,7 +88,7 @@
                 <div class="option-group">
                     <label for="session-name">Session Name (optional):</label>
                     <input type="text" id="session-name" name="session_name" 
-                           placeholder="e.g., 'Short sentences test'">
+                           placeholder="Default: tts_eval_HH_MM_SS_DD_MM_YYYY">
                 </div>
             </div>
 
@@ -92,6 +100,112 @@
                 </span>
             </button>
         </form>
+        </div>
+
+        <!-- Batch CSV Upload Tab -->
+        <div id="batch-tab" class="tab-content hidden">
+            <div class="batch-upload-section">
+                <div class="form-section">
+                    <h3>Upload CSV for Batch Testing</h3>
+                    <p class="batch-description">
+                        Upload a CSV file with one prompt per line (no header required).
+                    </p>
+                    
+                    <div class="csv-upload-area" id="csv-drop-zone">
+                        <input type="file" id="csv-file-input" accept=".csv" hidden>
+                        <div class="upload-icon">📁</div>
+                        <p>Drag & drop a CSV file here or <button type="button" class="link-btn" onclick="document.getElementById('csv-file-input').click()">browse</button></p>
+                        <p class="file-name hidden" id="selected-file-name"></p>
+                    </div>
+                </div>
+
+                <!-- Provider Selection for Batch -->
+                <div class="form-section">
+                    <label>Select TTS Providers to Test:</label>
+                    <div class="batch-providers-container">
+                        {% for provider in providers %}
+                        <label class="batch-provider-checkbox">
+                            <input type="checkbox" name="batch_provider" value="{{ provider.provider_id }}" data-name="{{ provider.name }}">
+                            <span class="checkmark"></span>
+                            <span class="provider-name">{{ provider.name }}</span>
+                            {% if provider.demo_mode %}
+                            <span class="demo-badge">Demo</span>
+                            {% endif %}
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Session Name for Batch -->
+                <div class="form-section">
+                    <label for="batch-session-name">Session Name (optional):</label>
+                    <input type="text" id="batch-session-name" name="batch_session_name" 
+                           placeholder="Default: batch_tts_eval_HH_MM_SS_DD_MM_YYYY">
+                    <p class="batch-hint">Leave empty to auto-generate a name with timestamp</p>
+                </div>
+                    
+                <button type="button" id="start-batch-btn" class="primary-btn" disabled>
+                    <span class="btn-text">Start Batch Evaluation</span>
+                    <span class="btn-loading hidden">
+                        <span class="spinner-small"></span>
+                        Processing...
+                    </span>
+                </button>
+
+                <!-- Batch Progress Section -->
+                <div id="batch-progress" class="batch-progress hidden">
+                    <h3>Batch Progress</h3>
+                    <div class="progress-stats">
+                        <div class="progress-stat">
+                            <span class="stat-label">Progress:</span>
+                            <span id="progress-count">0 / 0</span>
+                        </div>
+                        <div class="progress-stat">
+                            <span class="stat-label">Elapsed:</span>
+                            <span id="elapsed-time">00:00</span>
+                        </div>
+                        <div class="progress-stat">
+                            <span class="stat-label">Success:</span>
+                            <span id="success-count" class="success-text">0</span>
+                        </div>
+                        <div class="progress-stat">
+                            <span class="stat-label">Failed:</span>
+                            <span id="failed-count" class="error-text">0</span>
+                        </div>
+                    </div>
+                    
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="batch-progress-bar" style="width: 0%"></div>
+                    </div>
+                    
+                    <div class="current-task" id="current-task">
+                        <span class="task-label">Current:</span>
+                        <span id="current-task-text">Waiting...</span>
+                    </div>
+                    
+                    <!-- Task Results Log -->
+                    <div class="task-log" id="task-log">
+                        <h4>Task Log</h4>
+                        <div class="log-entries" id="log-entries">
+                            <!-- Dynamically populated -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sample CSV Template -->
+                <div class="sample-csv-section">
+                    <h4>Sample CSV Format</h4>
+                    <pre class="csv-sample">Hello, how are you today?
+The quick brown fox jumps over the lazy dog.
+Welcome to our platform.
+Please leave a message after the beep.
+Your order has been confirmed.</pre>
+                    <button type="button" class="secondary-btn" onclick="downloadSampleCSV()">
+                        Download Sample CSV
+                    </button>
+                </div>
+            </div>
+        </div>
 
         <!-- Loading State -->
         <div id="loading" class="hidden">

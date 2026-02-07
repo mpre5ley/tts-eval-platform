@@ -175,3 +175,49 @@ def health(request):
             'status': 'unhealthy',
             'error': str(e)
         }, status=503)
+
+
+@require_http_methods(["POST"])
+def batch_csv_upload(request):
+    """Handle CSV file upload for batch testing"""
+    try:
+        if 'file' not in request.FILES:
+            return JsonResponse({'error': 'No file provided'}, status=400)
+        
+        csv_file = request.FILES['file']
+        providers = request.POST.get('providers', '')
+        session_name = request.POST.get('session_name', '')
+        
+        # Forward the file and form data to the backend
+        files = {'file': (csv_file.name, csv_file.read(), csv_file.content_type)}
+        data = {
+            'providers': providers,
+            'session_name': session_name
+        }
+        response = requests.post(
+            f"{settings.BACKEND_API_URL}/batch/upload/",
+            files=files,
+            data=data,
+            timeout=30
+        )
+        return JsonResponse(response.json(), status=response.status_code)
+    except requests.RequestException as e:
+        return JsonResponse({'error': f'Backend connection error: {str(e)}'}, status=503)
+
+
+@require_http_methods(["POST"])
+def batch_execute_task(request):
+    """Execute a single batch task"""
+    try:
+        data = json.loads(request.body)
+        
+        response = requests.post(
+            f"{settings.BACKEND_API_URL}/batch/execute/",
+            json=data,
+            timeout=120
+        )
+        return JsonResponse(response.json(), status=response.status_code)
+    except requests.RequestException as e:
+        return JsonResponse({'error': f'Backend connection error: {str(e)}'}, status=503)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)

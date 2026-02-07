@@ -240,6 +240,7 @@ class ElevenLabsProvider(BaseTTSProvider):
             return self._demo_synthesis(text, voice_id, metrics, model_id)
         
         try:
+            # Start time for TTFB
             start_time = time.perf_counter() * 1000  # Convert to ms
             
             response = requests.post(

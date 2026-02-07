@@ -18,4 +18,8 @@ urlpatterns = [
     path('api/metrics/reset/', views.reset_metrics, name='reset_metrics'),
     path('api/benchmarks/create/', views.create_benchmark, name='create_benchmark'),
     path('api/health/', views.health, name='health'),
+    
+    # Batch CSV upload endpoints
+    path('api/batch/upload/', views.batch_csv_upload, name='batch_csv_upload'),
+    path('api/batch/execute/', views.batch_execute_task, name='batch_execute_task'),
 ]
