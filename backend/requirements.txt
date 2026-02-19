@@ -10,6 +10,9 @@ requests==2.31.0
 # AWS SDK for Amazon Polly
 boto3==1.34.0
 
+# Google Cloud TTS with gRPC streaming (optional - for service account auth)
+google-cloud-texttospeech==2.16.0
+
 # Audio processing (optional, for advanced metrics)
 pydub==0.25.1
 

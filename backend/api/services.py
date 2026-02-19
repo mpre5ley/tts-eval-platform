@@ -448,14 +448,32 @@ class GoogleTTSProvider(BaseTTSProvider):
     def __init__(self):
         super().__init__()
         self.api_key = os.getenv('GOOGLE_TTS_API_KEY')
-        self.demo_mode = not self.api_key
+        self.credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+        self.demo_mode = not (self.api_key or self.credentials_path)
         self.base_url = 'https://texttospeech.googleapis.com/v1'
+        self.grpc_client = None
+        self.grpc_available = False
         
         if self.demo_mode:
             print('-----------------------------------------------------')
-            print('Google TTS running in DEMO MODE - No API key found')
-            print('Define GOOGLE_TTS_API_KEY in ./backend/.env')
+            print('Google TTS running in DEMO MODE - No credentials found')
+            print('Define GOOGLE_TTS_API_KEY or GOOGLE_APPLICATION_CREDENTIALS in ./backend/.env')
             print('-----------------------------------------------------')
+        else:
+            # Try to import Google Cloud TTS client for streaming
+            try:
+                from google.cloud import texttospeech
+                self.texttospeech = texttospeech
+                # Only use gRPC client if service account credentials are available
+                if self.credentials_path:
+                    self.grpc_client = texttospeech.TextToSpeechClient()
+                    self.grpc_available = True
+                    print('Google Cloud TTS gRPC client loaded - streaming enabled')
+                else:
+                    print('Google TTS using API key - REST API only (gRPC requires service account)')
+            except ImportError:
+                print('Google Cloud TTS library not available - using REST API')
+                self.grpc_available = False
     
     def get_voices(self) -> List[Dict[str, Any]]:
         """Get available Google TTS voices"""
@@ -581,15 +599,205 @@ class GoogleTTSProvider(BaseTTSProvider):
             )
     
     def synthesize_streaming(self, text: str, voice_id: str, **kwargs) -> TTSResult:
-        """Google TTS doesn't support streaming, use regular synthesis"""
-        return self.synthesize(text, voice_id, **kwargs)
+        """Google TTS streaming synthesis - uses gRPC if available, otherwise REST with chunked reading"""
+        metrics = TTSMetrics()
+        metrics.is_streaming = True
+        char_count, word_count = self.get_text_metrics(text)
+        metrics.character_count = char_count
+        metrics.word_count = word_count
+        
+        language_code = kwargs.get('language_code', 'en-US')
+        full_voice_name = self._get_full_voice_name(voice_id, language_code)
+        
+        if self.demo_mode:
+            return self._demo_synthesis(text, voice_id, metrics)
+        
+        # Try gRPC streaming first if available (requires service account)
+        if self.grpc_available and self.grpc_client:
+            try:
+                return self._synthesize_grpc_streaming(text, voice_id, language_code, full_voice_name, metrics)
+            except Exception as e:
+                print(f"Google gRPC streaming failed: {e}, falling back to REST streaming")
+        
+        # Use REST API with streaming response reading for jitter measurement
+        return self._synthesize_rest_streaming(text, voice_id, language_code, full_voice_name, metrics, **kwargs)
+    
+    def _synthesize_grpc_streaming(self, text: str, voice_id: str, language_code: str, full_voice_name: str, metrics: TTSMetrics) -> TTSResult:
+        """Use gRPC streaming API (requires service account credentials)"""
+        start_time = time.perf_counter() * 1000
+        chunks = []
+        chunk_sizes = []
+        first_chunk_received = False
+        
+        # Build the streaming synthesis request
+        streaming_config = self.texttospeech.StreamingSynthesizeConfig(
+            voice=self.texttospeech.VoiceSelectionParams(
+                language_code=language_code,
+                name=full_voice_name,
+            )
+        )
+        
+        config_request = self.texttospeech.StreamingSynthesizeRequest(
+            streaming_config=streaming_config
+        )
+        
+        input_request = self.texttospeech.StreamingSynthesizeRequest(
+            input=self.texttospeech.StreamingSynthesisInput(text=text)
+        )
+        
+        def request_generator():
+            yield config_request
+            yield input_request
+        
+        ttfb_time = time.perf_counter() * 1000
+        metrics.time_to_first_byte = ttfb_time - start_time
+        
+        responses = self.grpc_client.streaming_synthesize(request_generator())
+        
+        for response in responses:
+            if response.audio_content:
+                current_time = time.perf_counter() * 1000
+                
+                if not first_chunk_received:
+                    metrics.time_to_first_audio = current_time - start_time
+                    first_chunk_received = True
+                
+                metrics.chunk_timings.append(current_time - start_time)
+                chunks.append(response.audio_content)
+                chunk_sizes.append(len(response.audio_content))
+        
+        end_time = time.perf_counter() * 1000
+        audio_data = b''.join(chunks)
+        
+        if audio_data:
+            metrics.total_synthesis_time = end_time - start_time
+            metrics.audio_size = len(audio_data)
+            metrics.audio_format = 'mp3'
+            metrics.sample_rate = 24000
+            metrics.chunk_count = len(chunks)
+            metrics.avg_chunk_size = statistics.mean(chunk_sizes) if chunk_sizes else 0
+            metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
+            metrics.calculate_derived_metrics()
+            
+            return TTSResult(
+                success=True,
+                audio_data=audio_data,
+                audio_base64=base64.b64encode(audio_data).decode('utf-8'),
+                metrics=metrics,
+                provider_id=self.provider_id,
+                voice_id=voice_id,
+            )
+        else:
+            return TTSResult(
+                success=False,
+                metrics=metrics,
+                error_message="No audio data received from gRPC streaming API",
+                provider_id=self.provider_id,
+                voice_id=voice_id,
+            )
+    
+    def _synthesize_rest_streaming(self, text: str, voice_id: str, language_code: str, full_voice_name: str, metrics: TTSMetrics, **kwargs) -> TTSResult:
+        """Use REST API with streaming response to measure network jitter"""
+        try:
+            start_time = time.perf_counter() * 1000
+            chunks = []
+            chunk_sizes = []
+            first_chunk_received = False
+            
+            # Use streaming request
+            response = requests.post(
+                f'{self.base_url}/text:synthesize',
+                params={'key': self.api_key},
+                json={
+                    'input': {'text': text},
+                    'voice': {
+                        'languageCode': language_code,
+                        'name': full_voice_name,
+                    },
+                    'audioConfig': {
+                        'audioEncoding': 'MP3',
+                        'speakingRate': kwargs.get('speaking_rate', 1.0),
+                        'pitch': kwargs.get('pitch', 0.0),
+                    },
+                },
+                stream=True,  # Enable streaming
+                timeout=60
+            )
+            
+            ttfb_time = time.perf_counter() * 1000
+            metrics.time_to_first_byte = ttfb_time - start_time
+            
+            if response.status_code == 200:
+                # Read response in chunks to measure timing
+                for chunk in response.iter_content(chunk_size=1024):
+                    if chunk:
+                        current_time = time.perf_counter() * 1000
+                        
+                        if not first_chunk_received:
+                            metrics.time_to_first_audio = current_time - start_time
+                            first_chunk_received = True
+                        
+                        metrics.chunk_timings.append(current_time - start_time)
+                        chunks.append(chunk)
+                        chunk_sizes.append(len(chunk))
+                
+                end_time = time.perf_counter() * 1000
+                
+                # Parse JSON response and extract audio
+                full_response = b''.join(chunks)
+                data = full_response.decode('utf-8')
+                import json as json_lib
+                json_data = json_lib.loads(data)
+                audio_content = json_data.get('audioContent', '')
+                audio_data = base64.b64decode(audio_content)
+                
+                # Recalculate chunk metrics based on audio data size
+                # (The original chunks were JSON, not audio)
+                audio_chunk_count = max(1, len(audio_data) // 1024)
+                
+                metrics.total_synthesis_time = end_time - start_time
+                metrics.audio_size = len(audio_data)
+                metrics.audio_format = 'mp3'
+                metrics.sample_rate = 24000
+                metrics.chunk_count = len(chunks)
+                metrics.avg_chunk_size = statistics.mean(chunk_sizes) if chunk_sizes else 0
+                metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
+                metrics.calculate_derived_metrics()
+                
+                return TTSResult(
+                    success=True,
+                    audio_data=audio_data,
+                    audio_base64=audio_content,
+                    metrics=metrics,
+                    provider_id=self.provider_id,
+                    voice_id=voice_id,
+                    response_headers=dict(response.headers),
+                )
+            else:
+                return TTSResult(
+                    success=False,
+                    metrics=metrics,
+                    error_message=f"API Error {response.status_code}: {response.text}",
+                    provider_id=self.provider_id,
+                    voice_id=voice_id,
+                )
+        
+        except Exception as e:
+            return TTSResult(
+                success=False,
+                metrics=metrics,
+                error_message=str(e),
+                provider_id=self.provider_id,
+                voice_id=voice_id,
+            )
     
     def _demo_synthesis(self, text: str, voice_id: str, metrics: TTSMetrics) -> TTSResult:
-        """Generate demo response with simulated metrics"""
+        """Generate demo response with simulated streaming metrics"""
         import random
         
         time.sleep(0.1 + random.random() * 0.2)
         
+        metrics.is_streaming = True
         metrics.time_to_first_byte = 60 + random.random() * 80
         metrics.time_to_first_audio = metrics.time_to_first_byte + 30 + random.random() * 40
         metrics.total_synthesis_time = metrics.time_to_first_audio + len(text) * (1.5 + random.random())
@@ -597,6 +805,18 @@ class GoogleTTSProvider(BaseTTSProvider):
         metrics.audio_size = int(len(text) * 140)
         metrics.audio_format = 'mp3'
         metrics.sample_rate = 24000
+        
+        # Simulate chunk timings for jitter calculation
+        num_chunks = max(3, len(text) // 20)
+        chunk_interval = (metrics.total_synthesis_time - metrics.time_to_first_audio) / num_chunks
+        for i in range(num_chunks):
+            # Add some variation to simulate real streaming jitter
+            jitter_variation = random.uniform(-15, 15)
+            timing = metrics.time_to_first_audio + (i * chunk_interval) + jitter_variation
+            metrics.chunk_timings.append(timing)
+        metrics.chunk_count = num_chunks
+        metrics.avg_chunk_size = metrics.audio_size / num_chunks if num_chunks > 0 else 0
+        
         metrics.calculate_derived_metrics()
         
         audio_data = self._generate_demo_audio(text)
@@ -734,17 +954,108 @@ class AzureTTSProvider(BaseTTSProvider):
             )
     
     def synthesize_streaming(self, text: str, voice_id: str, **kwargs) -> TTSResult:
-        """Azure TTS streaming synthesis"""
-        # Azure supports streaming but requires websocket connection
-        # For simplicity, use regular synthesis
-        return self.synthesize(text, voice_id, **kwargs)
+        """Azure TTS streaming synthesis using REST API with chunked response reading"""
+        metrics = TTSMetrics()
+        metrics.is_streaming = True
+        char_count, word_count = self.get_text_metrics(text)
+        metrics.character_count = char_count
+        metrics.word_count = word_count
+        
+        if self.demo_mode:
+            return self._demo_synthesis(text, voice_id, metrics)
+        
+        try:
+            start_time = time.perf_counter() * 1000
+            chunks = []
+            chunk_sizes = []
+            first_chunk_received = False
+            
+            ssml = f'''<speak version='1.0' xml:lang='en-US'>
+                <voice xml:lang='en-US' name='{voice_id}'>{text}</voice>
+            </speak>'''
+            
+            # Use streaming request to get chunks as they arrive
+            response = requests.post(
+                self.base_url,
+                headers={
+                    'Ocp-Apim-Subscription-Key': self.api_key,
+                    'Content-Type': 'application/ssml+xml',
+                    'X-Microsoft-OutputFormat': 'audio-16khz-128kbitrate-mono-mp3',
+                },
+                data=ssml.encode('utf-8'),
+                stream=True,  # Enable streaming
+                timeout=60
+            )
+            
+            # TTFB: Time when headers are received
+            ttfb_time = time.perf_counter() * 1000
+            metrics.time_to_first_byte = ttfb_time - start_time
+            
+            if response.status_code == 200:
+                # Read response in chunks to measure streaming jitter
+                for chunk in response.iter_content(chunk_size=1024):
+                    if chunk:
+                        current_time = time.perf_counter() * 1000
+                        
+                        if not first_chunk_received:
+                            # TTFA: Time when first audio data is received
+                            metrics.time_to_first_audio = current_time - start_time
+                            first_chunk_received = True
+                        
+                        metrics.chunk_timings.append(current_time - start_time)
+                        chunks.append(chunk)
+                        chunk_sizes.append(len(chunk))
+                
+                end_time = time.perf_counter() * 1000
+                audio_data = b''.join(chunks)
+                
+                metrics.total_synthesis_time = end_time - start_time
+                metrics.audio_size = len(audio_data)
+                metrics.audio_format = 'mp3'
+                metrics.sample_rate = 16000
+                metrics.bitrate = 128
+                metrics.chunk_count = len(chunks)
+                metrics.avg_chunk_size = statistics.mean(chunk_sizes) if chunk_sizes else 0
+                
+                # Calculate actual audio duration
+                metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
+                
+                metrics.calculate_derived_metrics()
+                
+                return TTSResult(
+                    success=True,
+                    audio_data=audio_data,
+                    audio_base64=base64.b64encode(audio_data).decode('utf-8'),
+                    metrics=metrics,
+                    provider_id=self.provider_id,
+                    voice_id=voice_id,
+                    response_headers=dict(response.headers),
+                )
+            else:
+                return TTSResult(
+                    success=False,
+                    metrics=metrics,
+                    error_message=f"API Error {response.status_code}: {response.text}",
+                    provider_id=self.provider_id,
+                    voice_id=voice_id,
+                )
+        
+        except Exception as e:
+            return TTSResult(
+                success=False,
+                metrics=metrics,
+                error_message=str(e),
+                provider_id=self.provider_id,
+                voice_id=voice_id,
+            )
     
     def _demo_synthesis(self, text: str, voice_id: str, metrics: TTSMetrics) -> TTSResult:
-        """Generate demo response with simulated metrics"""
+        """Generate demo response with simulated streaming metrics"""
         import random
         
         time.sleep(0.1 + random.random() * 0.2)
         
+        metrics.is_streaming = True
         metrics.time_to_first_byte = 70 + random.random() * 90
         metrics.time_to_first_audio = metrics.time_to_first_byte + 25 + random.random() * 45
         metrics.total_synthesis_time = metrics.time_to_first_audio + len(text) * (1.8 + random.random())
@@ -753,6 +1064,18 @@ class AzureTTSProvider(BaseTTSProvider):
         metrics.audio_format = 'mp3'
         metrics.sample_rate = 16000
         metrics.bitrate = 128
+        
+        # Simulate chunk timings for jitter calculation
+        num_chunks = max(3, len(text) // 20)
+        chunk_interval = (metrics.total_synthesis_time - metrics.time_to_first_audio) / num_chunks
+        for i in range(num_chunks):
+            # Add some variation to simulate real streaming jitter
+            jitter_variation = random.uniform(-20, 20)
+            timing = metrics.time_to_first_audio + (i * chunk_interval) + jitter_variation
+            metrics.chunk_timings.append(timing)
+        metrics.chunk_count = num_chunks
+        metrics.avg_chunk_size = metrics.audio_size / num_chunks if num_chunks > 0 else 0
+        
         metrics.calculate_derived_metrics()
         
         audio_data = self._generate_demo_audio(text)
