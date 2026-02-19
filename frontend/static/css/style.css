@@ -1342,50 +1342,93 @@ input[type="text"]::placeholder {
     color: var(--text-primary);
 }
 
-/* Batch Providers Container */
-.batch-providers-container {
-    display: flex;
-    flex-wrap: wrap;
+/* Batch Providers Grid with Voice Selection */
+.batch-providers-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 15px;
     margin-top: 10px;
 }
 
-.batch-provider-checkbox {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 16px;
+.batch-provider-card {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
-    cursor: pointer;
+    border-radius: 10px;
+    padding: 15px;
     transition: all 0.2s;
 }
 
-.batch-provider-checkbox:hover {
-    background: rgba(0, 212, 255, 0.1);
-    border-color: var(--primary-color);
+.batch-provider-card:hover {
+    border-color: rgba(0, 212, 255, 0.3);
 }
 
-.batch-provider-checkbox input[type="checkbox"] {
+.batch-provider-card.selected {
+    border-color: var(--primary-color);
+    background: rgba(0, 212, 255, 0.05);
+}
+
+.batch-provider-card .provider-header {
+    margin-bottom: 12px;
+}
+
+.batch-provider-card .provider-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+}
+
+.batch-provider-card .provider-checkbox input[type="checkbox"] {
     width: 18px;
     height: 18px;
     accent-color: var(--primary-color);
     cursor: pointer;
 }
 
-.batch-provider-checkbox .provider-name {
-    font-weight: 500;
+.batch-provider-card .provider-name {
+    font-weight: 600;
+    font-size: 1rem;
     color: var(--text-primary);
 }
 
-.batch-provider-checkbox .demo-badge {
-    font-size: 0.75rem;
-    padding: 2px 6px;
-    background: rgba(234, 179, 8, 0.2);
-    color: #eab308;
-    border-radius: 4px;
-    margin-left: 4px;
+.batch-provider-card .demo-badge {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    background: var(--warning-color);
+    color: #000;
+    border-radius: 10px;
+    margin-left: 8px;
+}
+
+.batch-provider-card .voice-selection {
+    margin-top: 10px;
+}
+
+.batch-provider-card .voice-selection label {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 5px;
+}
+
+.batch-voice-select {
+    width: 100%;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.batch-voice-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.batch-voice-select option {
+    background: var(--bg-darker);
+    color: var(--text-primary);
 }
 
 #batch-session-name {

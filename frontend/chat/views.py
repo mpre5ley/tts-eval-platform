@@ -186,12 +186,14 @@ def batch_csv_upload(request):
         
         csv_file = request.FILES['file']
         providers = request.POST.get('providers', '')
+        provider_voices = request.POST.get('provider_voices', '{}')
         session_name = request.POST.get('session_name', '')
         
         # Forward the file and form data to the backend
         files = {'file': (csv_file.name, csv_file.read(), csv_file.content_type)}
         data = {
             'providers': providers,
+            'provider_voices': provider_voices,
             'session_name': session_name
         }
         response = requests.post(

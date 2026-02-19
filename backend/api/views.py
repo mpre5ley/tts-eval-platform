@@ -703,10 +703,11 @@ def batch_csv_upload(request):
     """
     Process batch evaluations from a CSV file.
     CSV format: One prompt per line, no header.
-    Providers and session_name come from the form data.
+    Providers, voice selections, and session_name come from the form data.
     Returns batch_id and tasks for progress tracking.
     """
     import uuid
+    import json as json_lib
     
     if 'file' not in request.FILES:
         return Response(
@@ -723,8 +724,9 @@ def batch_csv_upload(request):
             status=status.HTTP_400_BAD_REQUEST
         )
     
-    # Get providers and session_name from form data
+    # Get providers, voice selections, and session_name from form data
     providers_str = request.POST.get('providers', '')
+    provider_voices_str = request.POST.get('provider_voices', '{}')
     session_name = request.POST.get('session_name', '').strip()
     
     if not providers_str:
@@ -735,6 +737,12 @@ def batch_csv_upload(request):
     
     # Parse providers (comma-separated)
     providers = [p.strip().lower() for p in providers_str.split(',') if p.strip()]
+    
+    # Parse provider voice selections (JSON)
+    try:
+        provider_voices = json_lib.loads(provider_voices_str)
+    except json_lib.JSONDecodeError:
+        provider_voices = {}
     
     # Validate all providers exist
     for provider in providers:
@@ -762,14 +770,17 @@ def batch_csv_upload(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Create tasks: each prompt × each provider
+        # Create tasks: each prompt × each provider (with voice selection)
         tasks = []
         task_num = 1
         for prompt in prompts:
             for provider in providers:
+                # Get selected voice for this provider (empty string means use default)
+                voice_id = provider_voices.get(provider, '')
                 tasks.append({
                     'prompt': prompt,
                     'provider': provider,
+                    'voice_id': voice_id,
                     'session_name': session_name,
                     'task_num': task_num
                 })

@@ -383,9 +383,17 @@ document.addEventListener('DOMContentLoaded', function() {
         startBatchBtn.disabled = !(selectedFile && selectedProviders.length > 0);
     }
     
-    // Listen for provider checkbox changes
-    document.querySelectorAll('input[name="batch_provider"]').forEach(checkbox => {
-        checkbox.addEventListener('change', updateBatchButtonState);
+    // Listen for batch provider checkbox changes - highlight card and update button state
+    document.querySelectorAll('.batch-provider-card input[name="batch_provider"]').forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            const card = this.closest('.batch-provider-card');
+            if (this.checked) {
+                card.classList.add('selected');
+            } else {
+                card.classList.remove('selected');
+            }
+            updateBatchButtonState();
+        });
     });
     
     // Start batch button
@@ -393,9 +401,17 @@ document.addEventListener('DOMContentLoaded', function() {
         startBatchBtn.addEventListener('click', async () => {
             if (!selectedFile) return;
             
-            // Get selected providers
-            const selectedProviders = Array.from(document.querySelectorAll('input[name="batch_provider"]:checked'))
-                .map(cb => cb.value);
+            // Get selected providers with their voice selections
+            const providerVoices = {};
+            document.querySelectorAll('.batch-provider-card input[name="batch_provider"]:checked').forEach(checkbox => {
+                const card = checkbox.closest('.batch-provider-card');
+                const providerId = checkbox.value;
+                const voiceSelect = card.querySelector('.batch-voice-select');
+                const voiceId = voiceSelect ? voiceSelect.value : '';
+                providerVoices[providerId] = voiceId;
+            });
+            
+            const selectedProviders = Object.keys(providerVoices);
             
             if (selectedProviders.length === 0) {
                 alert('Please select at least one TTS provider');
@@ -405,10 +421,11 @@ document.addEventListener('DOMContentLoaded', function() {
             // Get session name
             const sessionName = document.getElementById('batch-session-name').value.trim();
             
-            // Upload and parse CSV with providers and session name
+            // Upload and parse CSV with providers, voices and session name
             const formData = new FormData();
             formData.append('file', selectedFile);
             formData.append('providers', selectedProviders.join(','));
+            formData.append('provider_voices', JSON.stringify(providerVoices));
             formData.append('session_name', sessionName);
             
             startBatchBtn.disabled = true;
@@ -483,6 +500,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     body: JSON.stringify({
                         prompt: task.prompt,
                         provider: task.provider,
+                        voice_id: task.voice_id,
                         session_name: task.session_name
                     })
                 });

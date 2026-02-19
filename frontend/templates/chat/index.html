@@ -121,17 +121,36 @@
 
                 <!-- Provider Selection for Batch -->
                 <div class="form-section">
-                    <label>Select TTS Providers to Test:</label>
-                    <div class="batch-providers-container">
+                    <label>Select TTS Providers and Voices:</label>
+                    <div class="batch-providers-grid">
                         {% for provider in providers %}
-                        <label class="batch-provider-checkbox">
-                            <input type="checkbox" name="batch_provider" value="{{ provider.provider_id }}" data-name="{{ provider.name }}">
-                            <span class="checkmark"></span>
-                            <span class="provider-name">{{ provider.name }}</span>
-                            {% if provider.demo_mode %}
-                            <span class="demo-badge">Demo</span>
-                            {% endif %}
-                        </label>
+                        <div class="batch-provider-card" data-provider-id="{{ provider.provider_id }}">
+                            <div class="provider-header">
+                                <label class="provider-checkbox">
+                                    <input type="checkbox" name="batch_provider" 
+                                           value="{{ provider.provider_id }}"
+                                           data-name="{{ provider.name }}">
+                                    <span class="checkmark"></span>
+                                    <span class="provider-name">{{ provider.name }}</span>
+                                    {% if provider.demo_mode %}
+                                    <span class="demo-badge">Demo</span>
+                                    {% endif %}
+                                </label>
+                            </div>
+                            
+                            <div class="voice-selection">
+                                <label>Voice:</label>
+                                <select class="batch-voice-select" data-provider="{{ provider.provider_id }}">
+                                    {% for voice in provider.voices %}
+                                    <option value="{{ voice.voice_id }}" 
+                                            data-language="{{ voice.language }}"
+                                            data-gender="{{ voice.gender }}">
+                                        {{ voice.name }} ({{ voice.language }}, {{ voice.gender }})
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
                         {% endfor %}
                     </div>
                 </div>
