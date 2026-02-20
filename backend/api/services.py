@@ -3,7 +3,10 @@
 import os
 import time
 import base64
+import json
 import statistics
+import struct
+import uuid
 import requests
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple, Any
@@ -449,6 +452,10 @@ class GoogleTTSProvider(BaseTTSProvider):
         super().__init__()
         self.api_key = os.getenv('GOOGLE_TTS_API_KEY')
         self.credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+        # Only consider credentials valid if the file actually exists
+        if self.credentials_path and not os.path.isfile(self.credentials_path):
+            print(f'Google credentials file not found at {self.credentials_path} - ignoring')
+            self.credentials_path = None
         self.demo_mode = not (self.api_key or self.credentials_path)
         self.base_url = 'https://texttospeech.googleapis.com/v1'
         self.grpc_client = None
@@ -606,7 +613,7 @@ class GoogleTTSProvider(BaseTTSProvider):
         metrics.character_count = char_count
         metrics.word_count = word_count
         
-        language_code = kwargs.get('language_code', 'en-US')
+        language_code = kwargs.pop('language_code', 'en-US')
         full_voice_name = self._get_full_voice_name(voice_id, language_code)
         
         if self.demo_mode:
@@ -629,12 +636,12 @@ class GoogleTTSProvider(BaseTTSProvider):
         chunk_sizes = []
         first_chunk_received = False
         
-        # Build the streaming synthesis request
+        # Build the streaming synthesis request (gRPC streaming supports PCM/LINEAR16, not MP3)
         streaming_config = self.texttospeech.StreamingSynthesizeConfig(
             voice=self.texttospeech.VoiceSelectionParams(
                 language_code=language_code,
                 name=full_voice_name,
-            )
+            ),
         )
         
         config_request = self.texttospeech.StreamingSynthesizeRequest(
@@ -649,10 +656,10 @@ class GoogleTTSProvider(BaseTTSProvider):
             yield config_request
             yield input_request
         
+        # TTFB: measured when gRPC call returns the response iterator
+        responses = self.grpc_client.streaming_synthesize(request_generator())
         ttfb_time = time.perf_counter() * 1000
         metrics.time_to_first_byte = ttfb_time - start_time
-        
-        responses = self.grpc_client.streaming_synthesize(request_generator())
         
         for response in responses:
             if response.audio_content:
@@ -671,22 +678,52 @@ class GoogleTTSProvider(BaseTTSProvider):
         
         if audio_data:
             metrics.total_synthesis_time = end_time - start_time
-            metrics.audio_size = len(audio_data)
-            metrics.audio_format = 'mp3'
-            metrics.sample_rate = 24000
             metrics.chunk_count = len(chunks)
             metrics.avg_chunk_size = statistics.mean(chunk_sizes) if chunk_sizes else 0
-            metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
-            metrics.calculate_derived_metrics()
             
-            return TTSResult(
-                success=True,
-                audio_data=audio_data,
-                audio_base64=base64.b64encode(audio_data).decode('utf-8'),
-                metrics=metrics,
-                provider_id=self.provider_id,
-                voice_id=voice_id,
-            )
+            # gRPC streaming returns PCM/LINEAR16 audio — convert to MP3 for playback
+            try:
+                from pydub import AudioSegment
+                pcm_audio = AudioSegment(
+                    data=audio_data,
+                    sample_width=2,  # 16-bit LINEAR16
+                    frame_rate=24000,
+                    channels=1,
+                )
+                mp3_buffer = BytesIO()
+                pcm_audio.export(mp3_buffer, format='mp3', bitrate='128k')
+                mp3_data = mp3_buffer.getvalue()
+                
+                metrics.audio_size = len(mp3_data)
+                metrics.audio_format = 'mp3'
+                metrics.sample_rate = 24000
+                metrics.audio_duration = len(pcm_audio) / 1000.0  # pydub gives ms
+                metrics.calculate_derived_metrics()
+                
+                return TTSResult(
+                    success=True,
+                    audio_data=mp3_data,
+                    audio_base64=base64.b64encode(mp3_data).decode('utf-8'),
+                    metrics=metrics,
+                    provider_id=self.provider_id,
+                    voice_id=voice_id,
+                )
+            except Exception as conv_err:
+                print(f"PCM to MP3 conversion failed: {conv_err}, returning raw PCM")
+                metrics.audio_size = len(audio_data)
+                metrics.audio_format = 'wav'
+                metrics.sample_rate = 24000
+                metrics.audio_duration = len(audio_data) / (24000 * 2)  # 16-bit mono
+                metrics.calculate_derived_metrics()
+                
+                return TTSResult(
+                    success=True,
+                    audio_data=audio_data,
+                    audio_base64=base64.b64encode(audio_data).decode('utf-8'),
+                    metrics=metrics,
+                    provider_id=self.provider_id,
+                    voice_id=voice_id,
+                )
         else:
             return TTSResult(
                 success=False,
@@ -844,6 +881,7 @@ class AzureTTSProvider(BaseTTSProvider):
         self.region = os.getenv('AZURE_TTS_REGION', 'eastus')
         self.demo_mode = not self.api_key
         self.base_url = f'https://{self.region}.tts.speech.microsoft.com/cognitiveservices/v1'
+        self.ws_url = f'wss://{self.region}.tts.speech.microsoft.com/cognitiveservices/websocket/v1'
         
         if self.demo_mode:
             print('-----------------------------------------------------')
@@ -954,7 +992,7 @@ class AzureTTSProvider(BaseTTSProvider):
             )
     
     def synthesize_streaming(self, text: str, voice_id: str, **kwargs) -> TTSResult:
-        """Azure TTS streaming synthesis using REST API with chunked response reading"""
+        """Azure TTS streaming synthesis using WebSocket for true progressive audio delivery"""
         metrics = TTSMetrics()
         metrics.is_streaming = True
         char_count, word_count = self.get_text_metrics(text)
@@ -965,6 +1003,135 @@ class AzureTTSProvider(BaseTTSProvider):
             return self._demo_synthesis(text, voice_id, metrics)
         
         try:
+            import websocket as ws_client
+        except ImportError:
+            print("websocket-client not installed, falling back to REST streaming")
+            return self._synthesize_rest_streaming(text, voice_id, metrics, **kwargs)
+        
+        try:
+            start_time = time.perf_counter() * 1000
+            chunks = []
+            chunk_sizes = []
+            first_chunk_received = False
+            
+            request_id = uuid.uuid4().hex
+            timestamp = time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime())
+            
+            # Connect via WebSocket with subscription key auth
+            ws = ws_client.create_connection(
+                self.ws_url,
+                header=[
+                    f'Ocp-Apim-Subscription-Key: {self.api_key}',
+                    f'X-ConnectionId: {request_id}',
+                ],
+                timeout=30
+            )
+            
+            # TTFB: WebSocket connection established
+            ttfb_time = time.perf_counter() * 1000
+            metrics.time_to_first_byte = ttfb_time - start_time
+            
+            # Send speech.config message
+            output_format = kwargs.get('output_format', 'audio-16khz-128kbitrate-mono-mp3')
+            config_payload = (
+                f'Path: speech.config\r\n'
+                f'X-RequestId: {request_id}\r\n'
+                f'X-Timestamp: {timestamp}\r\n'
+                f'Content-Type: application/json\r\n\r\n'
+                f'{{"context":{{"synthesis":{{"audio":{{"metadataoptions":'
+                f'{{"sentenceBoundaryEnabled":false,"wordBoundaryEnabled":false}},'
+                f'"outputFormat":"{output_format}"}}}}}}}}'
+            )
+            ws.send(config_payload)
+            
+            # Send SSML message
+            ssml = f"<speak version='1.0' xml:lang='en-US'><voice name='{voice_id}'>{text}</voice></speak>"
+            ssml_payload = (
+                f'Path: ssml\r\n'
+                f'X-RequestId: {request_id}\r\n'
+                f'X-Timestamp: {timestamp}\r\n'
+                f'Content-Type: application/ssml+xml\r\n\r\n'
+                f'{ssml}'
+            )
+            ws.send(ssml_payload)
+            
+            # Receive audio chunks progressively
+            turn_ended = False
+            while not turn_ended:
+                try:
+                    opcode, data = ws.recv_data()
+                except Exception as e:
+                    print(f"Azure WebSocket recv error: {e}")
+                    break
+                
+                if opcode == ws_client.ABNF.OPCODE_TEXT:
+                    # Text message - check for turn.end
+                    text_msg = data.decode('utf-8') if isinstance(data, bytes) else data
+                    if 'turn.end' in text_msg:
+                        turn_ended = True
+                    elif 'turn.start' in text_msg:
+                        pass  # Synthesis started
+                
+                elif opcode == ws_client.ABNF.OPCODE_BINARY:
+                    # Binary message - parse header and extract audio
+                    if len(data) > 2:
+                        header_len = struct.unpack('>H', data[:2])[0]
+                        audio_chunk = data[2 + header_len:]
+                        
+                        if audio_chunk:
+                            current_time = time.perf_counter() * 1000
+                            
+                            if not first_chunk_received:
+                                metrics.time_to_first_audio = current_time - start_time
+                                first_chunk_received = True
+                            
+                            metrics.chunk_timings.append(current_time - start_time)
+                            chunks.append(audio_chunk)
+                            chunk_sizes.append(len(audio_chunk))
+            
+            ws.close()
+            end_time = time.perf_counter() * 1000
+            audio_data = b''.join(chunks)
+            
+            if audio_data:
+                metrics.total_synthesis_time = end_time - start_time
+                metrics.audio_size = len(audio_data)
+                metrics.audio_format = 'mp3'
+                metrics.sample_rate = 16000
+                metrics.bitrate = 128
+                metrics.chunk_count = len(chunks)
+                metrics.avg_chunk_size = statistics.mean(chunk_sizes) if chunk_sizes else 0
+                
+                # Calculate actual audio duration
+                metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
+                
+                metrics.calculate_derived_metrics()
+                
+                return TTSResult(
+                    success=True,
+                    audio_data=audio_data,
+                    audio_base64=base64.b64encode(audio_data).decode('utf-8'),
+                    metrics=metrics,
+                    provider_id=self.provider_id,
+                    voice_id=voice_id,
+                )
+            else:
+                return TTSResult(
+                    success=False,
+                    metrics=metrics,
+                    error_message="No audio data received from WebSocket streaming",
+                    provider_id=self.provider_id,
+                    voice_id=voice_id,
+                )
+        
+        except Exception as e:
+            # Fall back to REST streaming if WebSocket fails
+            print(f"Azure WebSocket streaming failed: {e}, falling back to REST streaming")
+            return self._synthesize_rest_streaming(text, voice_id, metrics, **kwargs)
+    
+    def _synthesize_rest_streaming(self, text: str, voice_id: str, metrics: TTSMetrics, **kwargs) -> TTSResult:
+        """Fallback: REST API with chunked response reading"""
+        try:
             start_time = time.perf_counter() * 1000
             chunks = []
             chunk_sizes = []
@@ -974,7 +1141,6 @@ class AzureTTSProvider(BaseTTSProvider):
                 <voice xml:lang='en-US' name='{voice_id}'>{text}</voice>
             </speak>'''
             
-            # Use streaming request to get chunks as they arrive
             response = requests.post(
                 self.base_url,
                 headers={
@@ -983,22 +1149,20 @@ class AzureTTSProvider(BaseTTSProvider):
                     'X-Microsoft-OutputFormat': 'audio-16khz-128kbitrate-mono-mp3',
                 },
                 data=ssml.encode('utf-8'),
-                stream=True,  # Enable streaming
+                stream=True,
                 timeout=60
             )
             
-            # TTFB: Time when headers are received
             ttfb_time = time.perf_counter() * 1000
-            metrics.time_to_first_byte = ttfb_time - start_time
+            if not metrics.time_to_first_byte:
+                metrics.time_to_first_byte = ttfb_time - start_time
             
             if response.status_code == 200:
-                # Read response in chunks to measure streaming jitter
                 for chunk in response.iter_content(chunk_size=1024):
                     if chunk:
                         current_time = time.perf_counter() * 1000
                         
                         if not first_chunk_received:
-                            # TTFA: Time when first audio data is received
                             metrics.time_to_first_audio = current_time - start_time
                             first_chunk_received = True
                         
@@ -1016,10 +1180,7 @@ class AzureTTSProvider(BaseTTSProvider):
                 metrics.bitrate = 128
                 metrics.chunk_count = len(chunks)
                 metrics.avg_chunk_size = statistics.mean(chunk_sizes) if chunk_sizes else 0
-                
-                # Calculate actual audio duration
                 metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
-                
                 metrics.calculate_derived_metrics()
                 
                 return TTSResult(
@@ -1229,7 +1390,14 @@ class AmazonPollyProvider(BaseTTSProvider):
             )
     
     def synthesize_streaming(self, text: str, voice_id: str, **kwargs) -> TTSResult:
-        """Amazon Polly streaming synthesis - reads audio in chunks for jitter measurement"""
+        """Amazon Polly streaming synthesis using direct REST API with HTTP streaming.
+        
+        Uses the Polly REST API with requests stream=True and AWS SigV4 authentication,
+        providing the same HTTP streaming pattern as ElevenLabs and OpenAI:
+        - TTFB = HTTP response headers received
+        - TTFA = first audio byte from iter_content()
+        - Jitter = variation in progressive audio chunk delivery
+        """
         metrics = TTSMetrics()
         metrics.is_streaming = True
         char_count, word_count = self.get_text_metrics(text)
@@ -1243,6 +1411,105 @@ class AmazonPollyProvider(BaseTTSProvider):
             return self._demo_synthesis(text, voice_id, metrics)
         
         try:
+            from botocore.auth import SigV4Auth
+            from botocore.awsrequest import AWSRequest
+            from botocore.credentials import Credentials
+        except ImportError:
+            print("botocore not available, falling back to boto3 SDK streaming")
+            return self._synthesize_sdk_streaming(text, voice_id, engine, metrics)
+        
+        try:
+            start_time = time.perf_counter() * 1000
+            chunks = []
+            chunk_sizes = []
+            first_chunk_received = False
+            
+            # Build REST API request to Polly SynthesizeSpeech endpoint
+            url = f'https://polly.{self.region}.amazonaws.com/v1/speech'
+            payload = json.dumps({
+                'Engine': engine,
+                'OutputFormat': 'mp3',
+                'Text': text,
+                'VoiceId': voice_id,
+            })
+            
+            # Sign with AWS SigV4
+            credentials = Credentials(self.access_key, self.secret_key)
+            aws_request = AWSRequest(
+                method='POST',
+                url=url,
+                data=payload,
+                headers={'Content-Type': 'application/json'},
+            )
+            SigV4Auth(credentials, 'polly', self.region).add_auth(aws_request)
+            
+            # Make streaming HTTP request (identical to ElevenLabs/OpenAI pattern)
+            response = requests.post(
+                url,
+                headers=dict(aws_request.headers),
+                data=payload,
+                stream=True,
+                timeout=60,
+            )
+            
+            # TTFB: HTTP response headers received
+            ttfb_time = time.perf_counter() * 1000
+            metrics.time_to_first_byte = ttfb_time - start_time
+            
+            if response.status_code == 200:
+                for chunk in response.iter_content(chunk_size=1024):
+                    if chunk:
+                        current_time = time.perf_counter() * 1000
+                        
+                        if not first_chunk_received:
+                            # TTFA: first audio byte from the stream
+                            metrics.time_to_first_audio = current_time - start_time
+                            first_chunk_received = True
+                        
+                        metrics.chunk_timings.append(current_time - start_time)
+                        chunks.append(chunk)
+                        chunk_sizes.append(len(chunk))
+                
+                end_time = time.perf_counter() * 1000
+                audio_data = b''.join(chunks)
+                
+                metrics.total_synthesis_time = end_time - start_time
+                metrics.audio_size = len(audio_data)
+                metrics.audio_format = 'mp3'
+                metrics.chunk_count = len(chunks)
+                metrics.avg_chunk_size = statistics.mean(chunk_sizes) if chunk_sizes else 0
+                
+                # Calculate actual audio duration
+                metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
+                
+                metrics.calculate_derived_metrics()
+                
+                return TTSResult(
+                    success=True,
+                    audio_data=audio_data,
+                    audio_base64=base64.b64encode(audio_data).decode('utf-8'),
+                    metrics=metrics,
+                    provider_id=self.provider_id,
+                    voice_id=voice_id,
+                    response_headers=dict(response.headers),
+                )
+            else:
+                error_body = response.text
+                return TTSResult(
+                    success=False,
+                    metrics=metrics,
+                    error_message=f"Polly REST API Error {response.status_code}: {error_body}",
+                    provider_id=self.provider_id,
+                    voice_id=voice_id,
+                )
+        
+        except Exception as e:
+            print(f"Polly REST streaming failed: {e}, falling back to SDK streaming")
+            return self._synthesize_sdk_streaming(text, voice_id, engine, metrics)
+    
+    def _synthesize_sdk_streaming(self, text: str, voice_id: str, engine: str, metrics: TTSMetrics) -> TTSResult:
+        """Fallback: boto3 SDK synthesize_speech with AudioStream.read() chunking"""
+        try:
             start_time = time.perf_counter() * 1000
             chunks = []
             chunk_sizes = []
@@ -1255,24 +1522,20 @@ class AmazonPollyProvider(BaseTTSProvider):
                 Engine=engine
             )
             
-            # TTFB: Time when API response is received
             ttfb_time = time.perf_counter() * 1000
             metrics.time_to_first_byte = ttfb_time - start_time
             
             if 'AudioStream' in response:
                 audio_stream = response['AudioStream']
                 
-                # Read the stream in chunks (similar to ElevenLabs streaming)
-                chunk_size = 1024
                 while True:
-                    chunk = audio_stream.read(chunk_size)
+                    chunk = audio_stream.read(1024)
                     if not chunk:
                         break
                     
                     current_time = time.perf_counter() * 1000
                     
                     if not first_chunk_received:
-                        # TTFA: Time when first audio data is received
                         metrics.time_to_first_audio = current_time - start_time
                         first_chunk_received = True
                     
@@ -1288,10 +1551,7 @@ class AmazonPollyProvider(BaseTTSProvider):
                 metrics.audio_format = 'mp3'
                 metrics.chunk_count = len(chunks)
                 metrics.avg_chunk_size = statistics.mean(chunk_sizes) if chunk_sizes else 0
-                
-                # Calculate actual audio duration
                 metrics.audio_duration = get_audio_duration(audio_data, 'mp3')
-                
                 metrics.calculate_derived_metrics()
                 
                 return TTSResult(
