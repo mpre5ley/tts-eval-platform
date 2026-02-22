@@ -5,33 +5,23 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.conf import settings
 from django.utils import timezone
-from django.db.models import Avg, Min, Max, Count, F
-from django.http import StreamingHttpResponse
+from django.db.models import Avg, Min, Max, Count
 import statistics
-from dataclasses import asdict
 
 from .serializers import (
     SynthesisRequestSerializer,
     BatchSynthesisRequestSerializer,
-    EvaluationRequestSerializer,
     BenchmarkRequestSerializer,
-    SynthesisResponseSerializer,
-    BatchSynthesisResponseSerializer,
     TTSEvaluationSerializer,
     TTSEvaluationSummarySerializer,
     EvaluationSessionSerializer,
     EvaluationSessionListSerializer,
-    TTSProviderSerializer,
-    VoiceListSerializer,
-    ProviderInfoSerializer,
-    ProviderMetricsAggregateSerializer,
-    ComparisonMetricsSerializer,
     BenchmarkRunSerializer,
 )
-from .services import TTSServiceManager, TTSMetrics, TTSResult
+from .services import TTSServiceManager
 from .models import (
-    TTSProvider, Voice, EvaluationSession, TTSEvaluation,
-    BenchmarkRun, ProviderMetricsAggregate
+    TTSProvider, EvaluationSession, TTSEvaluation,
+    BenchmarkRun,
 )
 
 

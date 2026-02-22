@@ -13,7 +13,6 @@ from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from io import BytesIO
 from django.conf import settings
-from django.utils import timezone
 from dotenv import load_dotenv
 from pathlib import Path
 
